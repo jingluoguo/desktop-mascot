@@ -10,7 +10,7 @@ fn greet(name: &str) -> String {
 #[tauri::command]
 fn open_author_page<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
     app.opener()
-        .open_url("https://github.com/jingluoguo/lively-mascot", None::<&str>)
+        .open_url("https://github.com/jingluoguo", None::<&str>)
         .map_err(|error| error.to_string())
 }
 

@@ -36,7 +36,7 @@ type DashboardPreferences = {
 
 const STORAGE_KEY = "nightlight-mascot-settings";
 const UI_STORAGE_KEY = "desktop-mascot-dashboard-preferences";
-const AUTHOR_URL = "https://github.com/jingluoguo/lively-mascot";
+const AUTHOR_URL = "https://github.com/jingluoguo";
 const DEFAULT_SETTINGS: MascotSettings = {
   character: "ghost",
   emotion: "02",
@@ -192,6 +192,32 @@ const openSettingsWindow = async (settings: MascotSettings) => {
     }, 250);
   });
 };
+
+function CharacterPreview({ character, settings }: { character: string; settings: MascotSettings }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const previewTheme = character === settings.character ? settings : { ...settings, character, ...defaultThemes[character] };
+
+  useEffect(() => {
+    if (!hostRef.current) return;
+    const livelyMascot = getLivelyMascot();
+    if (!livelyMascot) return;
+    const mascot = livelyMascot.createMascot(hostRef.current, {
+      type: character,
+      size: 44,
+      color: previewTheme.bodyColor,
+      outline: previewTheme.outlineColor,
+      accent: previewTheme.accentColor,
+      viewMode: settings.viewMode,
+      outlineVisible: settings.outlineVisible,
+      followCursor: false,
+      hopInterval: null,
+    });
+    mascot.setEmotion("02");
+    return () => mascot.destroy();
+  }, [character, previewTheme.bodyColor, previewTheme.outlineColor, previewTheme.accentColor, settings.viewMode, settings.outlineVisible]);
+
+  return <div ref={hostRef} className="character-thumb-host" aria-hidden="true" />;
+}
 
 function PetWindow() {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -403,7 +429,7 @@ function SettingsWindow() {
         <div className="preview-stage"><div ref={previewRef} className="preview-host" /><span className="preview-status">{dashboardPreferences.locale === "zh-CN" ? livelyMascot?.emotions[previewEmotion]?.desc ?? text.idle : livelyMascot?.emotions[previewEmotion]?.name ?? text.idle}</span></div>
         <div className="character-picker">
           <span className="control-label">{text.characterModel}</span>
-          <div className="character-grid">{characters.map((character) => <button key={character.id} type="button" className={settings.character === character.id ? "selected" : ""} onClick={() => selectCharacter(character.id)}><span>{character.symbol}</span><small>{character.name[dashboardPreferences.locale]}</small></button>)}</div>
+          <div className="character-grid">{characters.map((character) => <button key={character.id} type="button" className={settings.character === character.id ? "selected" : ""} onClick={() => selectCharacter(character.id)}><CharacterPreview character={character.id} settings={settings} /><small>{character.name[dashboardPreferences.locale]}</small></button>)}</div>
         </div>
       </aside>
       <section className="settings-controls">
