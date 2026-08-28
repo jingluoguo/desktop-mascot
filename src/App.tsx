@@ -162,10 +162,13 @@ const loadDashboardPreferences = (): DashboardPreferences => {
 const openSettingsWindow = async (settings: MascotSettings) => {
   let settingsWindow = await WebviewWindow.getByLabel("settings");
   if (settingsWindow) {
-    await settingsWindow.show();
-    await settingsWindow.maximize();
-    await settingsWindow.setFocus();
-    await emitTo("settings", "mascot-settings-state", settings);
+    // Window commands can fail independently when the app was backgrounded.
+    // Keep restoring the window even if it is already visible or maximized.
+    await settingsWindow.unminimize().catch(() => undefined);
+    await settingsWindow.show().catch(() => undefined);
+    await settingsWindow.maximize().catch(() => undefined);
+    await settingsWindow.setFocus().catch(() => undefined);
+    await emitTo("settings", "mascot-settings-state", settings).catch(() => undefined);
     return;
   }
   settingsWindow = new WebviewWindow("settings", {
