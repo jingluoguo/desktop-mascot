@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "desktop-mascot",
+  "productName": "Desktop Mascot",
   "version": "0.1.0",
   "identifier": "com.jingluo.desktop-mascot",
   "build": {
@@ -13,12 +13,11 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "desktop-mascot",
-        "width": 320,
-        "height": 390,
-        "center": true,
-        "minWidth": 280,
-        "minHeight": 320,
+        "title": "Desktop Mascot",
+        "width": 300,
+        "height": 330,
+        "minWidth": 170,
+        "minHeight": 170,
         "resizable": false,
         "decorations": false,
         "transparent": true,
