@@ -1,5 +1,30 @@
 use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
+
+struct TrayMenuState {
+    visibility_item: tauri::menu::MenuItem<tauri::Wry>,
+}
+
+fn set_main_window_visibility(app: &tauri::AppHandle, visible: bool) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window is unavailable".to_string())?;
+    if visible {
+        window.show()
+    } else {
+        window.hide()
+    }
+    .map_err(|error| error.to_string())?;
+
+    if let Some(tray_menu) = app.try_state::<TrayMenuState>() {
+        tray_menu
+            .visibility_item
+            .set_text(if visible { "隐藏" } else { "显示" })
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -11,6 +36,33 @@ fn greet(name: &str) -> String {
 fn open_author_page<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
     app.opener()
         .open_url("https://github.com/jingluoguo", None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn quit_app<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    app.exit(0);
+}
+
+#[tauri::command]
+fn hide_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    set_main_window_visibility(&app, false)
+}
+
+#[tauri::command]
+fn set_global_shortcut<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    shortcut: String,
+) -> Result<(), String> {
+    let manager = app.global_shortcut();
+    manager
+        .unregister_all()
+        .map_err(|error| error.to_string())?;
+    if shortcut.trim().is_empty() {
+        return Ok(());
+    }
+    manager
+        .register(shortcut.as_str())
         .map_err(|error| error.to_string())
 }
 
@@ -67,12 +119,33 @@ fn resize_main_window<R: tauri::Runtime>(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    if let Some(window) = app.get_webview_window("main") {
+                        let visible = window.is_visible().unwrap_or(true);
+                        if visible {
+                            let _ = set_main_window_visibility(app, false);
+                        } else {
+                            let _ = set_main_window_visibility(app, true);
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             // Accessory apps stay available from the menu bar without a Dock icon.
             let _ = app
                 .handle()
                 .set_activation_policy(tauri::ActivationPolicy::Accessory);
             let _ = position_main_window(app.handle().clone());
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_focusable(true);
+            }
 
             let settings_item =
                 tauri::menu::MenuItem::with_id(app, "open-settings", "仪表盘", true, None::<&str>)?;
@@ -84,8 +157,10 @@ pub fn run() {
                 app,
                 &[&settings_item, &visibility_item, &quit_item],
             )?;
+            app.manage(TrayMenuState {
+                visibility_item: visibility_item.clone(),
+            });
 
-            let visibility_item_for_handler = visibility_item.clone();
             let mut tray = tauri::tray::TrayIconBuilder::new()
                 .menu(&menu)
                 .tooltip("Desktop Mascot")
@@ -99,13 +174,7 @@ pub fn run() {
                     "toggle-pet" => {
                         if let Some(window) = app.get_webview_window("main") {
                             let is_visible = window.is_visible().unwrap_or(true);
-                            if is_visible {
-                                let _ = window.hide();
-                                let _ = visibility_item_for_handler.set_text("显示");
-                            } else {
-                                let _ = window.show();
-                                let _ = visibility_item_for_handler.set_text("隐藏");
-                            }
+                            let _ = set_main_window_visibility(app, !is_visible);
                         }
                     }
                     "quit" => app.exit(0),
@@ -121,6 +190,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             open_author_page,
+            quit_app,
+            hide_main_window,
+            set_global_shortcut,
             position_main_window,
             resize_main_window
         ])

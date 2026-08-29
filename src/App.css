@@ -73,12 +73,75 @@ button { font: inherit; }
 .pet-caption { position: absolute; right: 0; bottom: 19px; left: 0; display: grid; gap: 4px; text-align: center; pointer-events: none; }
 .pet-caption strong { color: rgba(231, 248, 251, .9); font-size: 12px; font-weight: 600; }
 .pet-caption span { color: rgba(153, 192, 202, .8); font-size: 10px; letter-spacing: .03em; }
-.pet-menu { position: absolute; left: 20px; top: 20px; z-index: 10; width: 190px; padding: 13px; border: 1px solid rgba(157, 232, 255, .23); border-radius: 12px; background: rgba(8, 22, 28, .86); box-shadow: 0 16px 32px rgba(0, 0, 0, .3); backdrop-filter: blur(20px); cursor: default; pointer-events: auto; animation: menu-in .18s ease-out both; }
+.pet-menu { position: absolute; left: 20px; top: 20px; z-index: 10; width: 190px; padding: 13px; border: 1px solid rgba(157, 232, 255, .23); border-radius: 12px; background: #0a191b; box-shadow: 0 16px 32px rgba(0, 0, 0, .3); cursor: default; pointer-events: auto; }
 .menu-header { display: flex; justify-content: space-between; margin-bottom: 10px; color: #d9eef2; font-size: 11px; }.menu-count { color: #6f929c; font-family: ui-monospace, monospace; }
 .mood-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5px; }.mood-grid button { display: flex; align-items: center; justify-content: space-between; padding: 8px; color: #9bb5bc; border: 1px solid transparent; border-radius: 7px; background: rgba(157, 232, 255, .04); text-align: left; cursor: pointer; }.mood-grid button:hover,.mood-grid button.selected { color: #eafaff; border-color: rgba(157, 232, 255, .35); background: rgba(157, 232, 255, .13); }.mood-grid small { color: #67848c; font: 9px ui-monospace, monospace; }
 .quit-button { width: 100%; margin-top: 10px; padding: 8px; color: #9bb5bc; border: 1px solid rgba(157, 232, 255, .12); border-radius: 7px; background: transparent; font-size: 11px; cursor: pointer; }.quit-button:hover { color: #ffd5d5; border-color: rgba(255, 157, 157, .35); background: rgba(255, 157, 157, .08); }
-@keyframes menu-in { from { opacity: 0; transform: translateY(-5px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
-@media (prefers-reduced-motion: reduce) { .pet-menu { animation: none; } }
+/* Context menu mirrors the tray actions without opening a second window. */
+.pet-menu {
+  top: auto;
+  right: auto;
+  bottom: auto;
+  left: auto;
+  width: 184px;
+  padding: 10px;
+  border: 1px solid rgba(143, 224, 208, .28);
+  border-radius: 12px;
+  background: #0a191b;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, .38), inset 0 1px rgba(255, 255, 255, .05);
+  transform: none;
+  backdrop-filter: none;
+}
+.menu-header {
+  align-items: baseline;
+  padding: 3px 6px 8px;
+  border-bottom: 1px solid rgba(143, 224, 208, .13);
+  color: #e7f5f1;
+}
+.menu-header strong { font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+.menu-header span { color: #71938e; font: 9px ui-monospace, monospace; letter-spacing: .12em; }
+.menu-actions { display: grid; gap: 3px; padding-top: 7px; }
+.menu-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 32px;
+  padding: 7px 8px;
+  color: #b6cfca;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.menu-actions button small { color: #63817c; font: 9px ui-monospace, monospace; }
+.menu-actions button:hover,
+.menu-actions button:focus-visible { color: #e9faf5; border-color: rgba(143, 224, 208, .24); background: rgba(143, 224, 208, .12); outline: none; }
+.menu-actions button:hover small,
+.menu-actions button:focus-visible small { color: #9fe5d6; }
+.menu-actions .menu-danger:hover,
+.menu-actions .menu-danger:focus-visible { color: #ffd8cb; border-color: rgba(239, 179, 141, .28); background: rgba(239, 179, 141, .1); }
+.menu-actions .menu-danger:hover small,
+.menu-actions .menu-danger:focus-visible small { color: #efb38d; }
+.theme-light .pet-menu { border-color: rgba(24, 127, 129, .28); background: #f7fcfa; box-shadow: 0 18px 42px rgba(26, 75, 69, .2), inset 0 1px rgba(255, 255, 255, .8); }
+.theme-light .menu-header { color: #173239; border-color: rgba(24, 127, 129, .14); }
+.theme-light .menu-header span { color: #668681; }
+.theme-light .menu-actions button { color: #385957; }
+.theme-light .menu-actions button small { color: #6d8b86; }
+.theme-light .menu-actions button:hover,
+.theme-light .menu-actions button:focus-visible { color: #143b3b; border-color: rgba(24, 127, 129, .22); background: rgba(24, 127, 129, .1); }
+.theme-light .menu-actions .menu-danger:hover,
+.theme-light .menu-actions .menu-danger:focus-visible { color: #8f4936; border-color: rgba(191, 109, 72, .28); background: rgba(191, 109, 72, .1); }
+
+/* The context menu lives in its own native window, so it can extend beyond
+   the mascot window while staying anchored to the pointer's top-left point. */
+.context-menu-window { width: 100%; height: 100%; overflow: hidden; border-radius: 11px; background: transparent; isolation: isolate; -webkit-mask-image: -webkit-radial-gradient(white, black); }
+.context-menu-window .pet-menu { position: relative; inset: auto; width: 100%; height: 100%; padding: 5px 7px; border-radius: 11px; overflow: hidden; background-clip: padding-box; }
+.context-menu-window .menu-actions { gap: 1px; padding: 0; }
+.context-menu-window .menu-actions button { min-height: 32px; padding: 6px 9px; border-radius: 6px; }
+.context-menu-window .menu-actions button + button { margin-top: 1px; }
 
 /* Separate settings window */
 .settings-shell { display: flex; flex-direction: column; width: 100%; height: 100vh; min-height: 0; overflow: hidden; padding: 34px 38px; color: #e8f4f6; background: #0c151a; font-family: "Avenir Next", "Helvetica Neue", sans-serif; }
@@ -132,6 +195,17 @@ button { font: inherit; }
   min-height: 68px;
   overflow: hidden;
 }
+
+.shortcut-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 58px; border-bottom: 1px solid #234043; }
+.shortcut-row > div { display: grid; gap: 4px; min-width: 0; }
+.shortcut-row strong { color: #bfd2ce; font-size: 12px; font-weight: 500; }
+.shortcut-row small { color: #75918d; font-size: 10px; }
+.shortcut-row .shortcut-control { justify-items: end; }
+.shortcut-capture { flex: 0 0 auto; min-width: 142px; padding: 8px 11px; color: var(--accent); border: 1px solid #34575a; border-radius: 7px; background: rgba(8,20,22,.55); font: 11px ui-monospace, monospace; cursor: pointer; transition: .18s ease; }
+.shortcut-capture:hover, .shortcut-capture.recording { color: #102124; border-color: var(--accent); background: var(--accent); }
+.shortcut-capture.conflict { color: #ffd8cb; border-color: #d27d61; background: rgba(210, 125, 97, .12); }
+.shortcut-row .shortcut-error { max-width: 210px; color: #ef9f83; line-height: 1.35; text-align: right; }
+.theme-light .shortcut-row { border-color: var(--line); }.theme-light .shortcut-row strong { color: #385354; }.theme-light .shortcut-row small { color: #6e8583; }.theme-light .shortcut-capture { color: #187f81; border-color: #b9d0cc; background: #f4f8f6; }.theme-light .shortcut-capture:hover, .theme-light .shortcut-capture.recording { color: #fff; border-color: #187f81; background: #187f81; }.theme-light .shortcut-capture.conflict { color: #8f4936; border-color: #bf6d48; background: #fff4ef; }.theme-light .shortcut-row .shortcut-error { color: #a95039; }
 .emotion-thumb {
   position: relative;
   display: block;

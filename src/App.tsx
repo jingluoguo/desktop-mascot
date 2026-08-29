@@ -3,6 +3,7 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
+import { PhysicalPosition } from "@tauri-apps/api/dpi";
 import type { createMascot as CreateMascot, EmotionDefinition, MascotInstance, ViewMode } from "lively-mascot";
 import "lively-mascot/dist/lively-mascot.min.js";
 import "lively-mascot/dist/lively-mascot.min.css";
@@ -18,6 +19,7 @@ type MascotSettings = {
   bodyColor: string;
   outlineColor: string;
   accentColor: string;
+  globalShortcut: string;
 };
 
 type LivelyMascotApi = {
@@ -46,6 +48,7 @@ const DEFAULT_SETTINGS: MascotSettings = {
   bodyColor: "#bdeef2",
   outlineColor: "#23434d",
   accentColor: "#a9d9ff",
+  globalShortcut: "CommandOrControl+Shift+M",
 };
 const MAX_MASCOT_SIZE = 160;
 
@@ -82,6 +85,11 @@ const uiText = {
     language: "语言",
     theme: "主题",
     aboutAuthor: "关于作者",
+    globalShortcut: "全局快捷键",
+    globalShortcutHint: "按下后显示或隐藏桌面宠物",
+    recordShortcut: "录制快捷键",
+    recordingShortcut: "请按下快捷键…",
+    shortcutConflict: "该快捷键已被占用，请尝试其他组合",
   },
   en: {
     dashboardLabel: "Dashboard",
@@ -107,6 +115,11 @@ const uiText = {
     language: "Language",
     theme: "Theme",
     aboutAuthor: "About the author",
+    globalShortcut: "Global shortcut",
+    globalShortcutHint: "Show or hide the desktop mascot",
+    recordShortcut: "Record shortcut",
+    recordingShortcut: "Press a shortcut…",
+    shortcutConflict: "This shortcut is already in use. Try another combination.",
   },
 } as const;
 
@@ -138,6 +151,25 @@ const loadSettings = (): MascotSettings => {
   } catch {
     return DEFAULT_SETTINGS;
   }
+};
+
+const shortcutDisplay = (shortcut: string) => shortcut
+  .replace(/CommandOrControl/g, "⌘/Ctrl")
+  .replace(/Control/g, "⌃")
+  .replace(/Command/g, "⌘")
+  .replace(/Alt/g, "⌥")
+  .replace(/Shift/g, "⇧")
+  .replace(/\+/g, " ");
+
+const shortcutFromKeyboardEvent = (event: KeyboardEvent) => {
+  const parts: string[] = [];
+  if (event.metaKey || event.ctrlKey) parts.push("CommandOrControl");
+  if (event.altKey) parts.push("Alt");
+  if (event.shiftKey) parts.push("Shift");
+  const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
+  if (["Meta", "Control", "Alt", "Shift"].includes(key)) return null;
+  const normalized = key === " " ? "Space" : key;
+  return parts.length > 0 ? [...parts, normalized].join("+") : normalized;
 };
 
 const petWindowSize = (settings: MascotSettings) => {
@@ -238,7 +270,9 @@ function PetWindow() {
   const scaleVelocityRef = useRef(0);
   const pointerPollBusyRef = useRef(false);
   const [settings, setSettings] = useState(loadSettings);
+  const settingsRef = useRef(settings);
   const [activeEmotion, setActiveEmotion] = useState(settings.emotion);
+  settingsRef.current = settings;
 
   const triggerHappy = () => {
     if (happyResetTimerRef.current !== null) window.clearTimeout(happyResetTimerRef.current);
@@ -250,22 +284,39 @@ function PetWindow() {
   };
 
   useEffect(() => {
-    let stopUpdate: (() => void) | undefined;
-    let stopRequest: (() => void) | undefined;
-    let stopOpenSettings: (() => void) | undefined;
-    void listen<MascotSettings>("mascot-settings-update", ({ payload }) => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-      setSettings(payload);
-      setActiveEmotion(payload.emotion);
-    }).then((unlisten) => { stopUpdate = unlisten; });
-    void listen("mascot-settings-request", () => {
-      void emitTo("settings", "mascot-settings-state", settings);
-    }).then((unlisten) => { stopRequest = unlisten; });
-    void listen("open-settings", () => {
-      void openSettingsWindow(settings);
-    }).then((unlisten) => { stopOpenSettings = unlisten; });
-    return () => { stopUpdate?.(); stopRequest?.(); stopOpenSettings?.(); };
-  }, [settings]);
+    let disposed = false;
+    const unlisteners: Array<() => void> = [];
+    const registerListeners = async () => {
+      const registered = await Promise.all([
+        listen<MascotSettings>("mascot-settings-update", ({ payload }) => {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+          settingsRef.current = payload;
+          setSettings(payload);
+          setActiveEmotion(payload.emotion);
+        }),
+        listen("mascot-settings-request", () => {
+          void emitTo("settings", "mascot-settings-state", settingsRef.current);
+        }),
+        listen("open-settings", () => {
+          void openSettingsWindow(settingsRef.current);
+        }),
+      ]);
+      if (disposed) {
+        registered.forEach((unlisten) => unlisten());
+      } else {
+        unlisteners.push(...registered);
+      }
+    };
+    void registerListeners();
+    return () => {
+      disposed = true;
+      unlisteners.forEach((unlisten) => unlisten());
+    };
+  }, []);
+
+  useEffect(() => {
+    void invoke("set_global_shortcut", { shortcut: settings.globalShortcut }).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -372,17 +423,84 @@ function PetWindow() {
 
   const startDragging = async (event: React.PointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
-    try { await getCurrentWindow().startDragging(); } catch { /* Browser preview. */ }
+    try {
+      const appWindow = getCurrentWindow();
+      await appWindow.setFocus();
+      await appWindow.startDragging();
+    } catch { /* Browser preview. */ }
   };
 
-  const openSettings = async (event: React.MouseEvent<HTMLElement>) => {
+  const openContextMenu = async (event: React.MouseEvent<HTMLElement>) => {
     event.preventDefault();
-    await openSettingsWindow(settings);
+    const appWindow = getCurrentWindow();
+    try {
+      const [position, scaleFactor] = await Promise.all([appWindow.outerPosition(), appWindow.scaleFactor()]);
+      await openContextMenuWindow(position.x + event.clientX * scaleFactor, position.y + event.clientY * scaleFactor);
+    } catch {
+      await openContextMenuWindow(event.clientX, event.clientY);
+    }
   };
 
-  return <main className="pet-window" onPointerDown={startDragging} onContextMenu={openSettings}>
+  return <main className="pet-window" onPointerDown={startDragging} onContextMenu={openContextMenu}>
     <div ref={hostRef} className="pet-host" aria-label="可拖拽的桌面宠物" />
   </main>;
+}
+
+const openContextMenuWindow = async (x: number, y: number) => {
+  const width = 184;
+  const height = 114;
+  let menuWindow = await WebviewWindow.getByLabel("context-menu");
+  if (!menuWindow) {
+    menuWindow = new WebviewWindow("context-menu", {
+      url: "/?view=context-menu",
+      title: "",
+      width,
+      height,
+      x,
+      y,
+      resizable: false,
+      decorations: false,
+      transparent: true,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      shadow: false,
+    });
+    await new Promise<void>((resolve) => {
+      menuWindow?.once("tauri://created", () => resolve());
+      menuWindow?.once("tauri://error", () => resolve());
+    });
+  }
+  await menuWindow.setPosition(new PhysicalPosition(Math.round(x), Math.round(y))).catch(() => undefined);
+  await menuWindow.show().catch(() => undefined);
+  await menuWindow.setFocus().catch(() => undefined);
+};
+
+function ContextMenuWindow() {
+  const close = async () => {
+    await getCurrentWindow().close().catch(() => undefined);
+  };
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    const handleBlur = () => close();
+    const handleKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
+    window.addEventListener("blur", handleBlur);
+    window.addEventListener("keydown", handleKeyDown);
+    void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (!focused) void close();
+    }).then((dispose) => { unlisten = dispose; });
+    return () => {
+      unlisten?.();
+      window.removeEventListener("blur", handleBlur);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+  return <main className="context-menu-window"><div className="pet-menu" role="menu">
+    <div className="menu-actions">
+      <button type="button" role="menuitem" onClick={async () => { await emitTo("main", "open-settings"); await close(); }}><span>仪表盘</span><small>⌘</small></button>
+      <button type="button" role="menuitem" onClick={async () => { await invoke("hide_main_window").catch(() => undefined); await close(); }}><span>隐藏</span><small>H</small></button>
+      <button type="button" role="menuitem" className="menu-danger" onClick={() => { void invoke("quit_app").catch(() => undefined); }}><span>退出</span><small>Q</small></button>
+    </div>
+  </div></main>;
 }
 
 function SettingsWindow() {
@@ -391,6 +509,11 @@ function SettingsWindow() {
   const [settings, setSettings] = useState(loadSettings);
   const [previewEmotion, setPreviewEmotion] = useState(settings.emotion);
   const [dashboardPreferences, setDashboardPreferences] = useState(loadDashboardPreferences);
+  const [isRecordingShortcut, setIsRecordingShortcut] = useState(false);
+  const [shortcutDraft, setShortcutDraft] = useState<string | null>(null);
+  const [shortcutError, setShortcutError] = useState<string | null>(null);
+  const shortcutButtonRef = useRef<HTMLButtonElement>(null);
+  const shortcutBeforeRecordingRef = useRef(settings.globalShortcut);
   const text = uiText[dashboardPreferences.locale];
   const livelyMascot = getLivelyMascot();
   const groupedEmotions = useMemo(() => {
@@ -441,11 +564,73 @@ function SettingsWindow() {
 
   useEffect(() => { previewMascotRef.current?.setEmotion(previewEmotion); }, [previewEmotion]);
 
+  useEffect(() => {
+    if (!isRecordingShortcut) return;
+    let active = true;
+    let isApplyingShortcut = false;
+    const releaseShortcut = invoke("set_global_shortcut", { shortcut: "" }).catch(() => undefined);
+    shortcutButtonRef.current?.focus();
+    const cancelRecording = () => {
+      setShortcutDraft(null);
+      setShortcutError(null);
+      setIsRecordingShortcut(false);
+    };
+    const handleKeyDown = async (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === "Escape") {
+        cancelRecording();
+        return;
+      }
+      const shortcut = shortcutFromKeyboardEvent(event);
+      if (shortcut && !isApplyingShortcut) {
+        isApplyingShortcut = true;
+        setShortcutDraft(shortcut);
+        await releaseShortcut;
+        if (!active) return;
+        try {
+          await invoke("set_global_shortcut", { shortcut });
+          shortcutBeforeRecordingRef.current = shortcut;
+          setShortcutDraft(null);
+          setShortcutError(null);
+          update("globalShortcut", shortcut);
+          setIsRecordingShortcut(false);
+        } catch {
+          setShortcutError(text.shortcutConflict);
+          isApplyingShortcut = false;
+        }
+      }
+    };
+    const handleWindowBlur = () => cancelRecording();
+    window.addEventListener("keydown", handleKeyDown, true);
+    window.addEventListener("blur", handleWindowBlur);
+    return () => {
+      active = false;
+      window.removeEventListener("keydown", handleKeyDown, true);
+      window.removeEventListener("blur", handleWindowBlur);
+      void releaseShortcut
+        .then(() => invoke("set_global_shortcut", { shortcut: shortcutBeforeRecordingRef.current }))
+        .catch(() => undefined);
+    };
+  }, [isRecordingShortcut]);
+
   const update = <K extends keyof MascotSettings>(key: K, value: MascotSettings[K]) => {
     const next = { ...settings, [key]: value };
     setSettings(next);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     void emitTo("main", "mascot-settings-update", next);
+  };
+  const startShortcutRecording = () => {
+    shortcutBeforeRecordingRef.current = settings.globalShortcut;
+    setShortcutDraft(null);
+    setShortcutError(null);
+    setIsRecordingShortcut(true);
+  };
+  const cancelShortcutRecording = () => {
+    if (!isRecordingShortcut) return;
+    setShortcutDraft(null);
+    setShortcutError(null);
+    setIsRecordingShortcut(false);
   };
   const selectCharacter = (character: string) => {
     const next = { ...settings, character, ...defaultThemes[character] };
@@ -483,11 +668,12 @@ function SettingsWindow() {
         </div>
       </aside>
       <section className="settings-controls">
-        <div className="control-section"><div className="section-title"><div><span className="control-label">BEHAVIOR</span><h2>{text.behavior}</h2></div><button className="reset-button" type="button" onClick={() => { setSettings(DEFAULT_SETTINGS); localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SETTINGS)); void emitTo("main", "mascot-settings-update", DEFAULT_SETTINGS); }}>{text.reset}</button></div>
+        <div className="control-section"><div className="section-title"><div><span className="control-label">BEHAVIOR</span><h2>{text.behavior}</h2></div><button className="reset-button" type="button" onClick={() => { setSettings(DEFAULT_SETTINGS); localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SETTINGS)); void emitTo("main", "mascot-settings-update", DEFAULT_SETTINGS); void invoke("set_global_shortcut", { shortcut: DEFAULT_SETTINGS.globalShortcut }).catch(() => undefined); }}>{text.reset}</button></div>
           <div className="control-row"><label htmlFor="size">{text.size}</label><div className="range-wrap"><input id="size" type="range" min="80" max="160" step="10" value={settings.size} onChange={(event) => update("size", Number(event.target.value))} /><output>{settings.size}px</output></div></div>
           <div className="control-row"><span>{text.viewMode}</span><div className="segmented">{(["2d", "3d"] as ViewMode[]).map((mode) => <button key={mode} type="button" className={settings.viewMode === mode ? "selected" : ""} onClick={() => update("viewMode", mode)}>{mode.toUpperCase()}</button>)}</div></div>
           <label className="toggle-row"><span><strong>{text.followCursor}</strong><small>{text.followHint}</small></span><input type="checkbox" checked={settings.followCursor} onChange={(event) => update("followCursor", event.target.checked)} /><i /></label>
           <label className="toggle-row"><span><strong>{text.outline}</strong><small>{text.outlineHint}</small></span><input type="checkbox" checked={settings.outlineVisible} onChange={(event) => update("outlineVisible", event.target.checked)} /><i /></label>
+          <div className="shortcut-row"><div><strong>{text.globalShortcut}</strong><small>{text.globalShortcutHint}</small></div><div className="shortcut-control"><button ref={shortcutButtonRef} type="button" className={`shortcut-capture${isRecordingShortcut ? " recording" : ""}${shortcutError ? " conflict" : ""}`} onClick={startShortcutRecording} onBlur={cancelShortcutRecording} aria-label={text.recordShortcut}>{shortcutDraft ? shortcutDisplay(shortcutDraft) : isRecordingShortcut ? text.recordingShortcut : shortcutDisplay(settings.globalShortcut)}</button>{shortcutError && <small className="shortcut-error" role="alert">{shortcutError}</small>}</div></div>
           <div className="color-row"><label>{text.bodyColor}<input type="color" value={settings.bodyColor} onChange={(event) => update("bodyColor", event.target.value)} /></label><label>{text.outlineColor}<input type="color" value={settings.outlineColor} onChange={(event) => update("outlineColor", event.target.value)} /></label><label>{text.accentColor}<input type="color" value={settings.accentColor} onChange={(event) => update("accentColor", event.target.value)} /></label></div>
         </div>
         <div className="control-section emotion-section"><div className="section-title"><div><span className="control-label">EMOTIONS</span><h2>{text.emotions}</h2></div><div className="emotion-actions"><span className="emotion-count">{Object.keys(livelyMascot?.emotions ?? {}).length} {text.emotionCount}</span><button className="apply-emotion-button" type="button" onClick={() => update("emotion", previewEmotion)}>{text.setEmotion}</button></div></div>
@@ -499,7 +685,10 @@ function SettingsWindow() {
 }
 
 function App() {
-  return new URLSearchParams(window.location.search).get("view") === "settings" ? <SettingsWindow /> : <PetWindow />;
+  const view = new URLSearchParams(window.location.search).get("view");
+  if (view === "settings") return <SettingsWindow />;
+  if (view === "context-menu") return <ContextMenuWindow />;
+  return <PetWindow />;
 }
 
 export default App;

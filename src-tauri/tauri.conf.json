@@ -24,7 +24,8 @@
         "backgroundColor": "#00000000",
         "alwaysOnTop": true,
         "skipTaskbar": true,
-        "shadow": false
+        "shadow": false,
+        "acceptFirstMouse": true
       }
     ],
     "security": {
