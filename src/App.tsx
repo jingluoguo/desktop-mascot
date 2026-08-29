@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { createMascot as CreateMascot, EmotionDefinition, MascotInstance, ViewMode } from "lively-mascot";
 import "lively-mascot/dist/lively-mascot.min.js";
 import "lively-mascot/dist/lively-mascot.min.css";
@@ -20,7 +21,10 @@ type MascotSettings = {
   outlineColor: string;
   accentColor: string;
   globalShortcut: string;
+  dashboardShortcut: string;
 };
+
+type ShortcutSettingKey = "globalShortcut" | "dashboardShortcut";
 
 type LivelyMascotApi = {
   createMascot: typeof CreateMascot;
@@ -30,14 +34,55 @@ type LivelyMascotApi = {
 
 type DashboardTheme = "light" | "dark";
 type DashboardLocale = "zh-CN" | "en";
+type DashboardTab = "appearance" | "behavior" | "emotions" | "about";
 type DashboardPreferences = {
   theme: DashboardTheme;
   locale: DashboardLocale;
 };
 
+type AuthorLink = {
+  label: string;
+  url: string;
+};
+
+type AuthorTag = {
+  id: string;
+  name: string;
+  color: string;
+};
+
+type AuthorWork = {
+  id: string;
+  type: string;
+  version: string;
+  title: string;
+  description: string;
+  link: string;
+  cover: string;
+  tags: string[];
+  status: boolean;
+  featured: boolean;
+  releasedAt: string;
+};
+
+type AuthorData = {
+  schemaVersion: string;
+  updatedAt: string;
+  author: {
+    id: string;
+    name: string;
+    bio: string;
+    avatar: string;
+    links: AuthorLink[];
+  };
+  tags: AuthorTag[];
+  works: AuthorWork[];
+};
+
 const STORAGE_KEY = "nightlight-mascot-settings";
 const UI_STORAGE_KEY = "desktop-mascot-dashboard-preferences";
-const AUTHOR_URL = "https://github.com/jingluoguo";
+const AUTHOR_DATA_CACHE_KEY = "desktop-mascot-author-data";
+const AUTHOR_DATA_URL = "https://cdn.jsdelivr.net/gh/jingluoguo/jingluo_web@master/author.json";
 const DEFAULT_SETTINGS: MascotSettings = {
   character: "ghost",
   emotion: "02",
@@ -49,6 +94,7 @@ const DEFAULT_SETTINGS: MascotSettings = {
   outlineColor: "#23434d",
   accentColor: "#a9d9ff",
   globalShortcut: "CommandOrControl+Shift+M",
+  dashboardShortcut: "CommandOrControl+Shift+D",
 };
 const MAX_MASCOT_SIZE = 160;
 
@@ -64,6 +110,14 @@ const uiText = {
   "zh-CN": {
     dashboardLabel: "仪表盘",
     subtitle: "让每一刻，都有一个轻盈的陪伴。",
+    appearanceTab: "角色与外观",
+    behaviorTab: "行为与快捷键",
+    emotionsTab: "表情",
+    aboutTab: "关于作者",
+    appearanceEyebrow: "外观",
+    behaviorEyebrow: "偏好",
+    emotionsEyebrow: "状态",
+    aboutEyebrow: "关于",
     characterModel: "角色模型",
     behavior: "行为与外观",
     reset: "恢复默认",
@@ -85,8 +139,19 @@ const uiText = {
     language: "语言",
     theme: "主题",
     aboutAuthor: "关于作者",
-    globalShortcut: "全局快捷键",
+    authorWorks: "作品",
+    featuredWork: "精选",
+    workVersion: "版本",
+    releasedAt: "发布于",
+    authorLoading: "正在读取作者资料…",
+    authorUnavailable: "暂时无法读取作者资料",
+    authorCached: "当前显示上次成功加载的数据",
+    retry: "重试",
+    dataUpdatedAt: "资料更新",
+    globalShortcut: "显示或隐藏",
     globalShortcutHint: "按下后显示或隐藏桌面宠物",
+    dashboardShortcut: "打开仪表盘",
+    dashboardShortcutHint: "按下后打开并聚焦仪表盘",
     recordShortcut: "录制快捷键",
     recordingShortcut: "请按下快捷键…",
     shortcutConflict: "该快捷键已被占用，请尝试其他组合",
@@ -94,6 +159,14 @@ const uiText = {
   en: {
     dashboardLabel: "Dashboard",
     subtitle: "A little companion for every moment.",
+    appearanceTab: "Character & Style",
+    behaviorTab: "Behavior & Shortcuts",
+    emotionsTab: "Expressions",
+    aboutTab: "About the Author",
+    appearanceEyebrow: "Appearance",
+    behaviorEyebrow: "Preferences",
+    emotionsEyebrow: "State",
+    aboutEyebrow: "About",
     characterModel: "Character",
     behavior: "Behavior & Appearance",
     reset: "Reset",
@@ -115,8 +188,19 @@ const uiText = {
     language: "Language",
     theme: "Theme",
     aboutAuthor: "About the author",
-    globalShortcut: "Global shortcut",
+    authorWorks: "Selected work",
+    featuredWork: "Featured",
+    workVersion: "Version",
+    releasedAt: "Released",
+    authorLoading: "Loading author profile…",
+    authorUnavailable: "The author profile is currently unavailable",
+    authorCached: "Showing the last successfully loaded data",
+    retry: "Retry",
+    dataUpdatedAt: "Data updated",
+    globalShortcut: "Show or hide",
     globalShortcutHint: "Show or hide the desktop mascot",
+    dashboardShortcut: "Open dashboard",
+    dashboardShortcutHint: "Open and focus the dashboard",
     recordShortcut: "Record shortcut",
     recordingShortcut: "Press a shortcut…",
     shortcutConflict: "This shortcut is already in use. Try another combination.",
@@ -129,6 +213,13 @@ const englishEmotionGroups: Record<string, string> = {
   work: "Work states",
 };
 
+const workTypeName = (type: string, locale: DashboardLocale) => {
+  const normalized = type.trim().toLowerCase();
+  if (locale === "zh-CN") return ({ app: "应用", plugin: "插件", web: "网站", library: "库" } as Record<string, string>)[normalized] ?? type;
+  return ({ app: "App", plugin: "Plugin", web: "Web", library: "Library" } as Record<string, string>)[normalized] ?? type;
+};
+const workTypeClass = (type: string) => type.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+
 const defaultThemes: Record<string, Pick<MascotSettings, "bodyColor" | "outlineColor" | "accentColor">> = {
   sprout: { bodyColor: "#48ff42", outlineColor: "#080808", accentColor: "#ff9fb6" },
   cat: { bodyColor: "#3d4852", outlineColor: "#131a20", accentColor: "#eeb3c1" },
@@ -138,6 +229,92 @@ const defaultThemes: Record<string, Pick<MascotSettings, "bodyColor" | "outlineC
 };
 
 const getLivelyMascot = () => (window as Window & { LivelyMascot?: LivelyMascotApi }).LivelyMascot;
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+const stringValue = (value: unknown) => typeof value === "string" ? value.trim() : "";
+const booleanValue = (value: unknown) => typeof value === "boolean" ? value : undefined;
+const isExternalUrl = (value: string) => {
+  try {
+    return ["http:", "https:", "mailto:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+};
+const parseAuthorData = (value: unknown): AuthorData | null => {
+  if (!isRecord(value) || !isRecord(value.author)) return null;
+  const author = value.author;
+  const id = stringValue(author.id);
+  const name = stringValue(author.name);
+  if (!id || !name) return null;
+
+  const links = Array.isArray(author.links)
+    ? author.links.flatMap<AuthorLink>((item) => {
+      if (!isRecord(item)) return [];
+      const label = stringValue(item.label);
+      const url = stringValue(item.url);
+      return label && isExternalUrl(url) ? [{ label, url }] : [];
+    })
+    : [];
+  const tags = Array.isArray(value.tags)
+    ? value.tags.flatMap<AuthorTag>((item) => {
+      if (!isRecord(item)) return [];
+      const tag = { id: stringValue(item.id), name: stringValue(item.name), color: stringValue(item.color) };
+      return tag.id && tag.name ? [tag] : [];
+    })
+    : [];
+  const works = (Array.isArray(value.works)
+    ? value.works.flatMap<AuthorWork>((item) => {
+      if (!isRecord(item)) return [];
+      const workId = stringValue(item.id);
+      const title = stringValue(item.title);
+      const status = booleanValue(item.status) ?? false;
+      if (!workId || !title || !status) return [];
+      const link = stringValue(item.link);
+      const cover = stringValue(item.cover);
+      const workTags = Array.isArray(item.tags) ? item.tags.map(stringValue).filter(Boolean) : [];
+      return [{
+        id: workId,
+        type: stringValue(item.type),
+        version: stringValue(item.version),
+        title,
+        description: stringValue(item.description),
+        link: isExternalUrl(link) ? link : "",
+        cover: isExternalUrl(cover) ? cover : "",
+        tags: workTags,
+        status,
+        featured: booleanValue(item.featured) ?? false,
+        releasedAt: stringValue(item.releasedAt),
+      }];
+    })
+    : []).sort((first, second) => Number(second.featured) - Number(first.featured));
+
+  const avatar = stringValue(author.avatar);
+  return {
+    schemaVersion: stringValue(value.schemaVersion),
+    updatedAt: stringValue(value.updatedAt),
+    author: {
+      id,
+      name,
+      bio: stringValue(author.bio),
+      avatar: isExternalUrl(avatar) ? avatar : "",
+      links,
+    },
+    tags,
+    works,
+  };
+};
+const loadCachedAuthorData = () => {
+  try {
+    return parseAuthorData(JSON.parse(localStorage.getItem(AUTHOR_DATA_CACHE_KEY) ?? "null"));
+  } catch {
+    return null;
+  }
+};
+const openExternalUrl = (url: string) => {
+  if (!isExternalUrl(url)) return;
+  void openUrl(url).catch(() => {
+    window.open(url, "_blank", "noopener,noreferrer");
+  });
+};
 const loadSettings = (): MascotSettings => {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Partial<MascotSettings>;
@@ -171,6 +348,11 @@ const shortcutFromKeyboardEvent = (event: KeyboardEvent) => {
   const normalized = key === " " ? "Space" : key;
   return parts.length > 0 ? [...parts, normalized].join("+") : normalized;
 };
+
+const setGlobalShortcuts = (settings: Pick<MascotSettings, "globalShortcut" | "dashboardShortcut">) => invoke("set_global_shortcuts", {
+  visibilityShortcut: settings.globalShortcut,
+  dashboardShortcut: settings.dashboardShortcut,
+});
 
 const petWindowSize = (settings: MascotSettings) => {
   const margins: Record<string, { x: number; y: number }> = {
@@ -315,7 +497,7 @@ function PetWindow() {
   }, []);
 
   useEffect(() => {
-    void invoke("set_global_shortcut", { shortcut: settings.globalShortcut }).catch(() => undefined);
+    void setGlobalShortcuts(settings).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -509,13 +691,29 @@ function SettingsWindow() {
   const [settings, setSettings] = useState(loadSettings);
   const [previewEmotion, setPreviewEmotion] = useState(settings.emotion);
   const [dashboardPreferences, setDashboardPreferences] = useState(loadDashboardPreferences);
-  const [isRecordingShortcut, setIsRecordingShortcut] = useState(false);
+  const [activeTab, setActiveTab] = useState<DashboardTab>("appearance");
+  const [recordingShortcut, setRecordingShortcut] = useState<ShortcutSettingKey | null>(null);
   const [shortcutDraft, setShortcutDraft] = useState<string | null>(null);
   const [shortcutError, setShortcutError] = useState<string | null>(null);
-  const shortcutButtonRef = useRef<HTMLButtonElement>(null);
-  const shortcutBeforeRecordingRef = useRef(settings.globalShortcut);
+  const [authorData, setAuthorData] = useState<AuthorData | null>(loadCachedAuthorData);
+  const [authorDataState, setAuthorDataState] = useState<"loading" | "ready" | "cached" | "error">(() => loadCachedAuthorData() ? "cached" : "loading");
+  const [authorLoadAttempt, setAuthorLoadAttempt] = useState(0);
+  const visibilityShortcutButtonRef = useRef<HTMLButtonElement>(null);
+  const dashboardShortcutButtonRef = useRef<HTMLButtonElement>(null);
+  const shortcutsBeforeRecordingRef = useRef({
+    globalShortcut: settings.globalShortcut,
+    dashboardShortcut: settings.dashboardShortcut,
+  });
+  const tabButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const text = uiText[dashboardPreferences.locale];
   const livelyMascot = getLivelyMascot();
+  const dashboardTabs: Array<{ id: DashboardTab; label: string; eyebrow: string }> = [
+    { id: "appearance", label: text.appearanceTab, eyebrow: text.appearanceEyebrow },
+    { id: "behavior", label: text.behaviorTab, eyebrow: text.behaviorEyebrow },
+    { id: "emotions", label: text.emotionsTab, eyebrow: text.emotionsEyebrow },
+    { id: "about", label: text.aboutTab, eyebrow: text.aboutEyebrow },
+  ];
+  const activeTabDefinition = dashboardTabs.find((tab) => tab.id === activeTab) ?? dashboardTabs[0];
   const groupedEmotions = useMemo(() => {
     if (!livelyMascot) return [];
     const groups = livelyMascot.emotionGroups;
@@ -545,6 +743,27 @@ function SettingsWindow() {
   }, [dashboardPreferences.locale]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    const loadAuthorData = async () => {
+      if (!authorData) setAuthorDataState("loading");
+      try {
+        const response = await fetch(AUTHOR_DATA_URL, { cache: "no-store", signal: controller.signal });
+        if (!response.ok) throw new Error(`Author data request failed with ${response.status}`);
+        const parsed = parseAuthorData(await response.json());
+        if (!parsed) throw new Error("Author data does not match the supported schema");
+        localStorage.setItem(AUTHOR_DATA_CACHE_KEY, JSON.stringify(parsed));
+        setAuthorData(parsed);
+        setAuthorDataState("ready");
+      } catch {
+        if (controller.signal.aborted) return;
+        setAuthorDataState(authorData ? "cached" : "error");
+      }
+    };
+    void loadAuthorData();
+    return () => controller.abort();
+  }, [authorLoadAttempt]);
+
+  useEffect(() => {
     if (!previewRef.current || !livelyMascot) return;
     const mascot = livelyMascot.createMascot(previewRef.current, {
       type: settings.character,
@@ -560,20 +779,21 @@ function SettingsWindow() {
     previewMascotRef.current = mascot;
     mascot.setEmotion(previewEmotion);
     return () => { mascot.destroy(); previewMascotRef.current = null; };
-  }, [livelyMascot, settings.character, settings.viewMode, settings.outlineVisible, settings.bodyColor, settings.outlineColor, settings.accentColor]);
+  }, [activeTab, livelyMascot, settings.character, settings.viewMode, settings.outlineVisible, settings.bodyColor, settings.outlineColor, settings.accentColor]);
 
   useEffect(() => { previewMascotRef.current?.setEmotion(previewEmotion); }, [previewEmotion]);
 
   useEffect(() => {
-    if (!isRecordingShortcut) return;
+    if (!recordingShortcut) return;
     let active = true;
     let isApplyingShortcut = false;
-    const releaseShortcut = invoke("set_global_shortcut", { shortcut: "" }).catch(() => undefined);
-    shortcutButtonRef.current?.focus();
+    const shortcutKey = recordingShortcut;
+    const releaseShortcut = setGlobalShortcuts({ globalShortcut: "", dashboardShortcut: "" }).catch(() => undefined);
+    (shortcutKey === "globalShortcut" ? visibilityShortcutButtonRef : dashboardShortcutButtonRef).current?.focus();
     const cancelRecording = () => {
       setShortcutDraft(null);
       setShortcutError(null);
-      setIsRecordingShortcut(false);
+      setRecordingShortcut(null);
     };
     const handleKeyDown = async (event: KeyboardEvent) => {
       event.preventDefault();
@@ -589,12 +809,13 @@ function SettingsWindow() {
         await releaseShortcut;
         if (!active) return;
         try {
-          await invoke("set_global_shortcut", { shortcut });
-          shortcutBeforeRecordingRef.current = shortcut;
+          const nextShortcuts = { ...shortcutsBeforeRecordingRef.current, [shortcutKey]: shortcut };
+          await setGlobalShortcuts(nextShortcuts);
+          shortcutsBeforeRecordingRef.current = nextShortcuts;
           setShortcutDraft(null);
           setShortcutError(null);
-          update("globalShortcut", shortcut);
-          setIsRecordingShortcut(false);
+          update(shortcutKey, shortcut);
+          setRecordingShortcut(null);
         } catch {
           setShortcutError(text.shortcutConflict);
           isApplyingShortcut = false;
@@ -609,10 +830,10 @@ function SettingsWindow() {
       window.removeEventListener("keydown", handleKeyDown, true);
       window.removeEventListener("blur", handleWindowBlur);
       void releaseShortcut
-        .then(() => invoke("set_global_shortcut", { shortcut: shortcutBeforeRecordingRef.current }))
+        .then(() => setGlobalShortcuts(shortcutsBeforeRecordingRef.current))
         .catch(() => undefined);
     };
-  }, [isRecordingShortcut]);
+  }, [recordingShortcut]);
 
   const update = <K extends keyof MascotSettings>(key: K, value: MascotSettings[K]) => {
     const next = { ...settings, [key]: value };
@@ -620,17 +841,20 @@ function SettingsWindow() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     void emitTo("main", "mascot-settings-update", next);
   };
-  const startShortcutRecording = () => {
-    shortcutBeforeRecordingRef.current = settings.globalShortcut;
+  const startShortcutRecording = (shortcutKey: ShortcutSettingKey) => {
+    shortcutsBeforeRecordingRef.current = {
+      globalShortcut: settings.globalShortcut,
+      dashboardShortcut: settings.dashboardShortcut,
+    };
     setShortcutDraft(null);
     setShortcutError(null);
-    setIsRecordingShortcut(true);
+    setRecordingShortcut(shortcutKey);
   };
   const cancelShortcutRecording = () => {
-    if (!isRecordingShortcut) return;
+    if (!recordingShortcut) return;
     setShortcutDraft(null);
     setShortcutError(null);
-    setIsRecordingShortcut(false);
+    setRecordingShortcut(null);
   };
   const selectCharacter = (character: string) => {
     const next = { ...settings, character, ...defaultThemes[character] };
@@ -644,43 +868,131 @@ function SettingsWindow() {
     localStorage.setItem(UI_STORAGE_KEY, JSON.stringify(next));
   };
 
-  const openAuthorPage = () => {
-    void invoke("open_author_page").catch(() => {
-      window.open(AUTHOR_URL, "_blank", "noopener,noreferrer");
-    });
+  const resetSettings = () => {
+    setSettings(DEFAULT_SETTINGS);
+    setPreviewEmotion(DEFAULT_SETTINGS.emotion);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SETTINGS));
+    void emitTo("main", "mascot-settings-update", DEFAULT_SETTINGS);
+    void setGlobalShortcuts(DEFAULT_SETTINGS).catch(() => undefined);
   };
 
-  return <main className={`settings-shell theme-${dashboardPreferences.theme}`}>
-    <header className="settings-header">
-      <div className="settings-intro"><h1>{text.characterModel}</h1><p>{text.subtitle}</p></div>
-      <div className="dashboard-preferences">
+  const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    let nextIndex = index;
+    if (event.key === "ArrowDown" || event.key === "ArrowRight") nextIndex = (index + 1) % dashboardTabs.length;
+    else if (event.key === "ArrowUp" || event.key === "ArrowLeft") nextIndex = (index - 1 + dashboardTabs.length) % dashboardTabs.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = dashboardTabs.length - 1;
+    else return;
+    event.preventDefault();
+    setActiveTab(dashboardTabs[nextIndex].id);
+    tabButtonRefs.current[nextIndex]?.focus();
+  };
+
+  return <main className={`settings-shell dashboard-shell theme-${dashboardPreferences.theme}`}>
+    <aside className="dashboard-sidebar">
+      <div className="dashboard-brand">
+        <img src="/favicon.svg" alt="" />
+        <div><strong>Desktop Mascot</strong><span>{text.dashboardLabel}</span></div>
+      </div>
+      <nav className="dashboard-tabs" role="tablist" aria-label={text.dashboardLabel} aria-orientation="vertical">
+        {dashboardTabs.map((tab, index) => <button
+          key={tab.id}
+          ref={(element) => { tabButtonRefs.current[index] = element; }}
+          id={`dashboard-tab-${tab.id}`}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === tab.id}
+          aria-controls="dashboard-panel"
+          tabIndex={activeTab === tab.id ? 0 : -1}
+          className={activeTab === tab.id ? "selected" : ""}
+          onClick={() => setActiveTab(tab.id)}
+          onKeyDown={(event) => handleTabKeyDown(event, index)}
+        ><span>{String(index + 1).padStart(2, "0")}</span><strong>{tab.label}</strong></button>)}
+      </nav>
+      <div className="dashboard-sidebar-footer">
         <div className="preference-control"><span>{text.language}</span><div className="segmented"><button type="button" className={dashboardPreferences.locale === "zh-CN" ? "selected" : ""} onClick={() => updateDashboardPreference("locale", "zh-CN")}>中文</button><button type="button" className={dashboardPreferences.locale === "en" ? "selected" : ""} onClick={() => updateDashboardPreference("locale", "en")}>EN</button></div></div>
         <div className="preference-control"><span>{text.theme}</span><div className="segmented"><button type="button" className={dashboardPreferences.theme === "light" ? "selected" : ""} onClick={() => updateDashboardPreference("theme", "light")}>{text.light}</button><button type="button" className={dashboardPreferences.theme === "dark" ? "selected" : ""} onClick={() => updateDashboardPreference("theme", "dark")}>{text.dark}</button></div></div>
-        <a className="author-link" href={AUTHOR_URL} target="_blank" rel="noreferrer" onClick={(event) => { event.preventDefault(); openAuthorPage(); }}>{text.aboutAuthor}<span aria-hidden="true">↗</span></a>
+        <span className="dashboard-version">v0.1.0</span>
       </div>
-    </header>
-    <div className="settings-layout">
-      <aside className="preview-pane">
-        <div className="preview-stage"><div ref={previewRef} className="preview-host" /></div>
-        <div className="character-picker">
-          <span className="control-label">{text.characterModel}</span>
-          <div className="character-grid">{characters.map((character) => <button key={character.id} type="button" className={settings.character === character.id ? "selected" : ""} onClick={() => selectCharacter(character.id)}><CharacterPreview character={character.id} settings={settings} /><small>{character.name[dashboardPreferences.locale]}</small></button>)}</div>
+    </aside>
+    <section className="dashboard-workspace">
+      <header className="dashboard-workspace-header">
+        <div><span>{activeTabDefinition.eyebrow}</span><h1>{activeTabDefinition.label}</h1></div>
+        {activeTab !== "about" && <button className="reset-button" type="button" onClick={resetSettings}>{text.reset}</button>}
+      </header>
+      <div className="dashboard-scroll">
+        <div key={activeTab} id="dashboard-panel" className={`dashboard-panel dashboard-panel-${activeTab}`} role="tabpanel" aria-labelledby={`dashboard-tab-${activeTab}`}>
+          {activeTab === "appearance" && <div className="appearance-layout">
+            <aside className="preview-pane">
+              <div className="preview-stage"><div ref={previewRef} className="preview-host" /></div>
+            </aside>
+            <div className="settings-groups">
+              <section className="settings-group character-picker">
+                <div className="group-heading"><span className="control-label">MODEL</span><h2>{text.characterModel}</h2></div>
+                <div className="character-grid">{characters.map((character) => <button key={character.id} type="button" className={settings.character === character.id ? "selected" : ""} onClick={() => selectCharacter(character.id)}><CharacterPreview character={character.id} settings={settings} /><small>{character.name[dashboardPreferences.locale]}</small></button>)}</div>
+              </section>
+              <section className="settings-group">
+                <div className="group-heading"><span className="control-label">STYLE</span><h2>{text.behavior}</h2></div>
+                <div className="control-row"><label htmlFor="size">{text.size}</label><div className="range-wrap"><input id="size" type="range" min="80" max="160" step="10" value={settings.size} onChange={(event) => update("size", Number(event.target.value))} /><output>{settings.size}px</output></div></div>
+                <div className="control-row"><span>{text.viewMode}</span><div className="segmented">{(["2d", "3d"] as ViewMode[]).map((mode) => <button key={mode} type="button" className={settings.viewMode === mode ? "selected" : ""} onClick={() => update("viewMode", mode)}>{mode.toUpperCase()}</button>)}</div></div>
+                <label className="toggle-row"><span><strong>{text.outline}</strong><small>{text.outlineHint}</small></span><input type="checkbox" checked={settings.outlineVisible} onChange={(event) => update("outlineVisible", event.target.checked)} /><i /></label>
+                <div className="color-row"><label>{text.bodyColor}<input type="color" value={settings.bodyColor} onChange={(event) => update("bodyColor", event.target.value)} /></label><label>{text.outlineColor}<input type="color" value={settings.outlineColor} onChange={(event) => update("outlineColor", event.target.value)} /></label><label>{text.accentColor}<input type="color" value={settings.accentColor} onChange={(event) => update("accentColor", event.target.value)} /></label></div>
+              </section>
+            </div>
+          </div>}
+          {activeTab === "behavior" && <div className="behavior-layout settings-groups">
+            <section className="settings-group">
+              <div className="group-heading"><span className="control-label">POINTER</span><h2>{text.behavior}</h2></div>
+              <label className="toggle-row"><span><strong>{text.followCursor}</strong><small>{text.followHint}</small></span><input type="checkbox" checked={settings.followCursor} onChange={(event) => update("followCursor", event.target.checked)} /><i /></label>
+            </section>
+            <section className="settings-group">
+              <div className="group-heading"><span className="control-label">SHORTCUTS</span><h2>{text.recordShortcut}</h2></div>
+              <div className="shortcut-row"><div><strong>{text.globalShortcut}</strong><small>{text.globalShortcutHint}</small></div><div className="shortcut-control"><button ref={visibilityShortcutButtonRef} type="button" className={`shortcut-capture${recordingShortcut === "globalShortcut" ? " recording" : ""}${recordingShortcut === "globalShortcut" && shortcutError ? " conflict" : ""}`} onClick={() => startShortcutRecording("globalShortcut")} onBlur={cancelShortcutRecording} aria-label={text.recordShortcut}>{recordingShortcut === "globalShortcut" ? shortcutDraft ? shortcutDisplay(shortcutDraft) : text.recordingShortcut : shortcutDisplay(settings.globalShortcut)}</button>{recordingShortcut === "globalShortcut" && shortcutError && <small className="shortcut-error" role="alert">{shortcutError}</small>}</div></div>
+              <div className="shortcut-row"><div><strong>{text.dashboardShortcut}</strong><small>{text.dashboardShortcutHint}</small></div><div className="shortcut-control"><button ref={dashboardShortcutButtonRef} type="button" className={`shortcut-capture${recordingShortcut === "dashboardShortcut" ? " recording" : ""}${recordingShortcut === "dashboardShortcut" && shortcutError ? " conflict" : ""}`} onClick={() => startShortcutRecording("dashboardShortcut")} onBlur={cancelShortcutRecording} aria-label={text.recordShortcut}>{recordingShortcut === "dashboardShortcut" ? shortcutDraft ? shortcutDisplay(shortcutDraft) : text.recordingShortcut : shortcutDisplay(settings.dashboardShortcut)}</button>{recordingShortcut === "dashboardShortcut" && shortcutError && <small className="shortcut-error" role="alert">{shortcutError}</small>}</div></div>
+            </section>
+          </div>}
+          {activeTab === "emotions" && <div className="emotion-layout">
+            <aside className="preview-pane emotion-preview"><div className="preview-stage"><div ref={previewRef} className="preview-host" /></div><button className="apply-emotion-button" type="button" onClick={() => update("emotion", previewEmotion)}>{text.setEmotion}</button></aside>
+            <section className="emotion-section"><div className="emotion-summary"><span>{Object.keys(livelyMascot?.emotions ?? {}).length} {text.emotionCount}</span></div><div className="emotion-scroll">{groupedEmotions.map((group) => <div className="emotion-group" key={group.id}><h3>{dashboardPreferences.locale === "zh-CN" ? group.name : englishEmotionGroups[group.id] ?? group.id}</h3><div className="emotion-grid">{group.emotions.map((emotion) => <button key={emotion.id} type="button" className={previewEmotion === emotion.id ? "selected" : ""} onClick={() => setPreviewEmotion(emotion.id)}><CharacterPreview character={settings.character} settings={settings} emotion={emotion.id} size={48} className="emotion-thumb" /><span>{dashboardPreferences.locale === "zh-CN" ? emotion.desc : emotion.name}</span><small>{emotion.id}</small></button>)}</div></div>)}</div></section>
+          </div>}
+          {activeTab === "about" && <div className="about-layout">
+            {authorData ? <>
+              <section className="author-profile" aria-labelledby="author-name">
+                <div className="author-mark"><img src={authorData.author.avatar || "/favicon.svg"} alt={authorData.author.name} onError={(event) => { event.currentTarget.onerror = null; event.currentTarget.src = "/favicon.svg"; }} /></div>
+                <div className="about-copy">
+                  <span className="control-label">DESIGNED & BUILT BY</span>
+                  <h2 id="author-name">{authorData.author.name}</h2>
+                  <span className="author-handle">@{authorData.author.id}</span>
+                  {authorData.author.bio && <p>{authorData.author.bio}</p>}
+                  <div className="author-links">{authorData.author.links.map((link) => <button key={`${link.label}-${link.url}`} type="button" onClick={() => openExternalUrl(link.url)}>{link.label}<span aria-hidden="true">↗</span></button>)}</div>
+                  {authorData.updatedAt && <span className="author-updated">{text.dataUpdatedAt}<time>{authorData.updatedAt}</time></span>}
+                </div>
+              </section>
+              {authorDataState === "cached" && <div className="author-data-notice" role="status">{text.authorCached}<button type="button" onClick={() => setAuthorLoadAttempt((attempt) => attempt + 1)}>{text.retry}</button></div>}
+              {authorData.works.length > 0 && <section className="author-works" aria-labelledby="author-works-heading">
+                <div className="works-heading"><span className="control-label">PORTFOLIO</span><h2 id="author-works-heading">{text.authorWorks}</h2><span>{String(authorData.works.length).padStart(2, "0")}</span></div>
+                <div className="works-grid">{authorData.works.map((work) => {
+                  const workTags = work.tags.map((tagId) => authorData.tags.find((tag) => tag.id === tagId)).filter((tag): tag is AuthorTag => Boolean(tag));
+                  const content = <>
+                    {work.featured && <span className="featured-mark" title={text.featuredWork} aria-label={text.featuredWork}>{text.featuredWork}</span>}
+                    <div className="work-cover">{work.cover ? <img src={work.cover} alt="" onError={(event) => { event.currentTarget.style.display = "none"; }} /> : <span>{work.title.slice(0, 1)}</span>}</div>
+                    <div className="work-copy">{work.type && <span className={`work-type work-type-${work.type.toLowerCase().replace(/[^a-z0-9_-]/g, "-")}`}>{workTypeName(work.type, dashboardPreferences.locale)}</span>}<div className="work-title"><div><h3>{work.title}</h3>{work.version && <span className="work-version" title={text.workVersion}>{work.version}</span>}</div></div>{work.description && <p>{work.description}</p>}<div className="work-footer"><div className="work-tags">{workTags.map((tag) => <span key={tag.id}><i style={{ backgroundColor: tag.color }} />{tag.name}</span>)}</div>{work.releasedAt && <time>{text.releasedAt} {work.releasedAt}</time>}</div></div>
+                  </>;
+                  const cardClassName = `work-card${work.type ? ` work-card-${workTypeClass(work.type)}` : ""}${work.featured ? " featured" : ""}`;
+                  return work.link
+                    ? <button key={work.id} type="button" className={cardClassName} onClick={() => openExternalUrl(work.link)}>{content}</button>
+                    : <article key={work.id} className={cardClassName}>{content}</article>;
+                })}</div>
+              </section>}
+            </> : <div className="author-empty" role="status">
+              <img src="/favicon.svg" alt="" />
+              <strong>{authorDataState === "loading" ? text.authorLoading : text.authorUnavailable}</strong>
+              {authorDataState === "error" && <button type="button" onClick={() => setAuthorLoadAttempt((attempt) => attempt + 1)}>{text.retry}</button>}
+            </div>}
+          </div>}
         </div>
-      </aside>
-      <section className="settings-controls">
-        <div className="control-section"><div className="section-title"><div><span className="control-label">BEHAVIOR</span><h2>{text.behavior}</h2></div><button className="reset-button" type="button" onClick={() => { setSettings(DEFAULT_SETTINGS); localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SETTINGS)); void emitTo("main", "mascot-settings-update", DEFAULT_SETTINGS); void invoke("set_global_shortcut", { shortcut: DEFAULT_SETTINGS.globalShortcut }).catch(() => undefined); }}>{text.reset}</button></div>
-          <div className="control-row"><label htmlFor="size">{text.size}</label><div className="range-wrap"><input id="size" type="range" min="80" max="160" step="10" value={settings.size} onChange={(event) => update("size", Number(event.target.value))} /><output>{settings.size}px</output></div></div>
-          <div className="control-row"><span>{text.viewMode}</span><div className="segmented">{(["2d", "3d"] as ViewMode[]).map((mode) => <button key={mode} type="button" className={settings.viewMode === mode ? "selected" : ""} onClick={() => update("viewMode", mode)}>{mode.toUpperCase()}</button>)}</div></div>
-          <label className="toggle-row"><span><strong>{text.followCursor}</strong><small>{text.followHint}</small></span><input type="checkbox" checked={settings.followCursor} onChange={(event) => update("followCursor", event.target.checked)} /><i /></label>
-          <label className="toggle-row"><span><strong>{text.outline}</strong><small>{text.outlineHint}</small></span><input type="checkbox" checked={settings.outlineVisible} onChange={(event) => update("outlineVisible", event.target.checked)} /><i /></label>
-          <div className="shortcut-row"><div><strong>{text.globalShortcut}</strong><small>{text.globalShortcutHint}</small></div><div className="shortcut-control"><button ref={shortcutButtonRef} type="button" className={`shortcut-capture${isRecordingShortcut ? " recording" : ""}${shortcutError ? " conflict" : ""}`} onClick={startShortcutRecording} onBlur={cancelShortcutRecording} aria-label={text.recordShortcut}>{shortcutDraft ? shortcutDisplay(shortcutDraft) : isRecordingShortcut ? text.recordingShortcut : shortcutDisplay(settings.globalShortcut)}</button>{shortcutError && <small className="shortcut-error" role="alert">{shortcutError}</small>}</div></div>
-          <div className="color-row"><label>{text.bodyColor}<input type="color" value={settings.bodyColor} onChange={(event) => update("bodyColor", event.target.value)} /></label><label>{text.outlineColor}<input type="color" value={settings.outlineColor} onChange={(event) => update("outlineColor", event.target.value)} /></label><label>{text.accentColor}<input type="color" value={settings.accentColor} onChange={(event) => update("accentColor", event.target.value)} /></label></div>
-        </div>
-        <div className="control-section emotion-section"><div className="section-title"><div><span className="control-label">EMOTIONS</span><h2>{text.emotions}</h2></div><div className="emotion-actions"><span className="emotion-count">{Object.keys(livelyMascot?.emotions ?? {}).length} {text.emotionCount}</span><button className="apply-emotion-button" type="button" onClick={() => update("emotion", previewEmotion)}>{text.setEmotion}</button></div></div>
-          <div className="emotion-scroll">{groupedEmotions.map((group) => <div className="emotion-group" key={group.id}><h3>{dashboardPreferences.locale === "zh-CN" ? group.name : englishEmotionGroups[group.id] ?? group.id}</h3><div className="emotion-grid">{group.emotions.map((emotion) => <button key={emotion.id} type="button" className={previewEmotion === emotion.id ? "selected" : ""} onClick={() => setPreviewEmotion(emotion.id)}><CharacterPreview character={settings.character} settings={settings} emotion={emotion.id} size={48} className="emotion-thumb" /><span>{dashboardPreferences.locale === "zh-CN" ? emotion.desc : emotion.name}</span><small>{emotion.id}</small></button>)}</div></div>)}</div>
-        </div>
-      </section>
-    </div>
+      </div>
+    </section>
   </main>;
 }
 

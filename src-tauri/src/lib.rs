@@ -1,9 +1,20 @@
+use std::sync::Mutex;
 use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
-use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 struct TrayMenuState {
     visibility_item: tauri::menu::MenuItem<tauri::Wry>,
+}
+
+#[derive(Default)]
+struct ShortcutBindingsState {
+    bindings: Mutex<ShortcutBindings>,
+}
+
+#[derive(Default)]
+struct ShortcutBindings {
+    visibility: Option<u32>,
+    dashboard: Option<u32>,
 }
 
 fn set_main_window_visibility(app: &tauri::AppHandle, visible: bool) -> Result<(), String> {
@@ -33,13 +44,6 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-fn open_author_page<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
-    app.opener()
-        .open_url("https://github.com/jingluoguo", None::<&str>)
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
 fn quit_app<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
     app.exit(0);
 }
@@ -50,20 +54,48 @@ fn hide_main_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn set_global_shortcut<R: tauri::Runtime>(
+fn set_global_shortcuts<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    shortcut: String,
+    bindings_state: tauri::State<'_, ShortcutBindingsState>,
+    visibility_shortcut: String,
+    dashboard_shortcut: String,
 ) -> Result<(), String> {
+    let parse = |value: &str| -> Result<Option<Shortcut>, String> {
+        if value.trim().is_empty() {
+            Ok(None)
+        } else {
+            value
+                .parse::<Shortcut>()
+                .map(Some)
+                .map_err(|error| error.to_string())
+        }
+    };
+    let visibility = parse(&visibility_shortcut)?;
+    let dashboard = parse(&dashboard_shortcut)?;
+    if visibility.map(|shortcut| shortcut.id()) == dashboard.map(|shortcut| shortcut.id())
+        && visibility.is_some()
+    {
+        return Err("shortcut is already assigned to another action".to_string());
+    }
+
     let manager = app.global_shortcut();
     manager
         .unregister_all()
         .map_err(|error| error.to_string())?;
-    if shortcut.trim().is_empty() {
-        return Ok(());
+    for shortcut in [visibility, dashboard].into_iter().flatten() {
+        if let Err(error) = manager.register(shortcut) {
+            let _ = manager.unregister_all();
+            return Err(error.to_string());
+        }
     }
-    manager
-        .register(shortcut.as_str())
-        .map_err(|error| error.to_string())
+    *bindings_state
+        .bindings
+        .lock()
+        .map_err(|error| error.to_string())? = ShortcutBindings {
+        visibility: visibility.map(|shortcut| shortcut.id()),
+        dashboard: dashboard.map(|shortcut| shortcut.id()),
+    };
+    Ok(())
 }
 
 #[tauri::command]
@@ -121,8 +153,22 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
+                .with_handler(|app, shortcut, event| {
                     if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    let bindings_state = app.state::<ShortcutBindingsState>();
+                    let Ok(bindings) = bindings_state.bindings.lock() else {
+                        return;
+                    };
+                    let visibility_matches = bindings.visibility == Some(shortcut.id());
+                    let dashboard_matches = bindings.dashboard == Some(shortcut.id());
+                    drop(bindings);
+                    if dashboard_matches {
+                        let _ = app.emit("open-settings", ());
+                        return;
+                    }
+                    if !visibility_matches {
                         return;
                     }
                     if let Some(window) = app.get_webview_window("main") {
@@ -138,6 +184,7 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            app.manage(ShortcutBindingsState::default());
             // Accessory apps stay available from the menu bar without a Dock icon.
             let _ = app
                 .handle()
@@ -166,7 +213,17 @@ pub fn run() {
                 .tooltip("Desktop Mascot")
                 // Keep the full-color mascot mark in the status bar so it matches the app icon.
                 .icon_as_template(false)
-                .show_menu_on_left_click(true)
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    if let tauri::tray::TrayIconEvent::Click {
+                        button: tauri::tray::MouseButton::Left,
+                        button_state: tauri::tray::MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let _ = tray.app_handle().emit("open-settings", ());
+                    }
+                })
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "open-settings" => {
                         let _ = app.emit("open-settings", ());
@@ -189,10 +246,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
-            open_author_page,
             quit_app,
             hide_main_window,
-            set_global_shortcut,
+            set_global_shortcuts,
             position_main_window,
             resize_main_window
         ])
