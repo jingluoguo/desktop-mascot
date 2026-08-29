@@ -3,7 +3,6 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
-import { LogicalSize } from "@tauri-apps/api/dpi";
 import type { createMascot as CreateMascot, EmotionDefinition, MascotInstance, ViewMode } from "lively-mascot";
 import "lively-mascot/dist/lively-mascot.min.js";
 import "lively-mascot/dist/lively-mascot.min.css";
@@ -40,7 +39,7 @@ const AUTHOR_URL = "https://github.com/jingluoguo";
 const DEFAULT_SETTINGS: MascotSettings = {
   character: "ghost",
   emotion: "02",
-  size: 260,
+  size: 120,
   viewMode: "3d",
   outlineVisible: true,
   followCursor: true,
@@ -48,6 +47,7 @@ const DEFAULT_SETTINGS: MascotSettings = {
   outlineColor: "#23434d",
   accentColor: "#a9d9ff",
 };
+const MAX_MASCOT_SIZE = 160;
 
 const characters = [
   { id: "ghost", name: { "zh-CN": "幽灵", en: "Ghost" }, symbol: "G" },
@@ -60,7 +60,7 @@ const characters = [
 const uiText = {
   "zh-CN": {
     dashboardLabel: "仪表盘",
-    subtitle: "角色、外观与表情设置会立即同步。",
+    subtitle: "让每一刻，都有一个轻盈的陪伴。",
     characterModel: "角色模型",
     behavior: "行为与外观",
     reset: "恢复默认",
@@ -85,7 +85,7 @@ const uiText = {
   },
   en: {
     dashboardLabel: "Dashboard",
-    subtitle: "Character, appearance, and expression changes sync instantly.",
+    subtitle: "A little companion for every moment.",
     characterModel: "Character",
     behavior: "Behavior & Appearance",
     reset: "Reset",
@@ -127,7 +127,14 @@ const defaultThemes: Record<string, Pick<MascotSettings, "bodyColor" | "outlineC
 const getLivelyMascot = () => (window as Window & { LivelyMascot?: LivelyMascotApi }).LivelyMascot;
 const loadSettings = (): MascotSettings => {
   try {
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") };
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Partial<MascotSettings>;
+    const savedSize = Number(saved.size);
+    const size = savedSize === 260
+      ? DEFAULT_SETTINGS.size
+      : Number.isFinite(savedSize)
+        ? Math.min(160, Math.max(80, savedSize))
+        : DEFAULT_SETTINGS.size;
+    return { ...DEFAULT_SETTINGS, ...saved, size };
   } catch {
     return DEFAULT_SETTINGS;
   }
@@ -165,6 +172,7 @@ const openSettingsWindow = async (settings: MascotSettings) => {
     // Window commands can fail independently when the app was backgrounded.
     // Keep restoring the window even if it is already visible or maximized.
     await settingsWindow.unminimize().catch(() => undefined);
+    await settingsWindow.setTitle("仪表盘").catch(() => undefined);
     await settingsWindow.show().catch(() => undefined);
     await settingsWindow.maximize().catch(() => undefined);
     await settingsWindow.setFocus().catch(() => undefined);
@@ -193,7 +201,7 @@ const openSettingsWindow = async (settings: MascotSettings) => {
   });
 };
 
-function CharacterPreview({ character, settings }: { character: string; settings: MascotSettings }) {
+function CharacterPreview({ character, settings, emotion = "02", size = 36, className = "" }: { character: string; settings: MascotSettings; emotion?: string; size?: number; className?: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const previewTheme = character === settings.character ? settings : { ...settings, character, ...defaultThemes[character] };
 
@@ -203,7 +211,7 @@ function CharacterPreview({ character, settings }: { character: string; settings
     if (!livelyMascot) return;
     const mascot = livelyMascot.createMascot(hostRef.current, {
       type: character,
-      size: 44,
+      size,
       color: previewTheme.bodyColor,
       outline: previewTheme.outlineColor,
       accent: previewTheme.accentColor,
@@ -211,18 +219,23 @@ function CharacterPreview({ character, settings }: { character: string; settings
       outlineVisible: settings.outlineVisible,
       followCursor: false,
       hopInterval: null,
+      animated: false,
     });
-    mascot.setEmotion("02");
+    mascot.setEmotion(emotion);
     return () => mascot.destroy();
-  }, [character, previewTheme.bodyColor, previewTheme.outlineColor, previewTheme.accentColor, settings.viewMode, settings.outlineVisible]);
+  }, [character, emotion, size, previewTheme.bodyColor, previewTheme.outlineColor, previewTheme.accentColor, settings.viewMode, settings.outlineVisible]);
 
-  return <div ref={hostRef} className="character-thumb-host" aria-hidden="true" />;
+  return <div ref={hostRef} className={`character-thumb-host ${className}`} aria-hidden="true" />;
 }
 
 function PetWindow() {
   const hostRef = useRef<HTMLDivElement>(null);
   const mascotRef = useRef<MascotInstance | null>(null);
   const happyResetTimerRef = useRef<number | null>(null);
+  const scaleFrameRef = useRef<number | null>(null);
+  const scaleTargetRef = useRef(1);
+  const scaleValueRef = useRef(1);
+  const scaleVelocityRef = useRef(0);
   const pointerPollBusyRef = useRef(false);
   const [settings, setSettings] = useState(loadSettings);
   const [activeEmotion, setActiveEmotion] = useState(settings.emotion);
@@ -258,9 +271,14 @@ function PetWindow() {
     if (!hostRef.current) return;
     const livelyMascot = getLivelyMascot();
     if (!livelyMascot) return;
+    if (scaleFrameRef.current !== null) window.cancelAnimationFrame(scaleFrameRef.current);
+    scaleFrameRef.current = null;
+    scaleTargetRef.current = settings.size / MAX_MASCOT_SIZE;
+    scaleValueRef.current = scaleTargetRef.current;
+    scaleVelocityRef.current = 0;
     const mascot = livelyMascot.createMascot(hostRef.current, {
       type: settings.character,
-      size: settings.size,
+      size: MAX_MASCOT_SIZE,
       color: settings.bodyColor,
       outline: settings.outlineColor,
       accent: settings.accentColor,
@@ -271,24 +289,55 @@ function PetWindow() {
       onClick: triggerHappy,
     });
     mascotRef.current = mascot;
+    mascot.el.style.setProperty("--pet-scale", String(settings.size / MAX_MASCOT_SIZE));
     mascot.setEmotion(activeEmotion);
     return () => { mascot.destroy(); mascotRef.current = null; };
     // Recreate only when structural appearance settings change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.character, settings.size, settings.viewMode, settings.outlineVisible, settings.followCursor, settings.bodyColor, settings.outlineColor, settings.accentColor]);
+  }, [settings.character, settings.viewMode, settings.outlineVisible, settings.followCursor, settings.bodyColor, settings.outlineColor, settings.accentColor]);
 
   useEffect(() => {
-    const size = petWindowSize(settings);
-    const appWindow = getCurrentWindow();
-    void (async () => {
-      try {
-        await appWindow.setSize(new LogicalSize(size.width, size.height));
-        await invoke("position_main_window");
-      } catch {
-        // Browser previews do not expose native window sizing or positioning APIs.
+    const target = settings.size / MAX_MASCOT_SIZE;
+    scaleTargetRef.current = target;
+    if (scaleFrameRef.current !== null) return;
+
+    let previousTime = performance.now();
+    const stiffness = 190;
+    const damping = 27; // Approximately critical damping: no overshoot.
+    const animateScale = (time: number) => {
+      const mascot = mascotRef.current;
+      if (!mascot) {
+        scaleFrameRef.current = null;
+        return;
       }
-    })();
-  }, [settings.character, settings.size]);
+      const deltaTime = Math.min((time - previousTime) / 1000, 0.032);
+      previousTime = time;
+      const displacement = scaleTargetRef.current - scaleValueRef.current;
+      scaleVelocityRef.current += (displacement * stiffness - scaleVelocityRef.current * damping) * deltaTime;
+      scaleValueRef.current += scaleVelocityRef.current * deltaTime;
+      mascot.el.style.setProperty("--pet-scale", String(scaleValueRef.current));
+
+      if (Math.abs(scaleTargetRef.current - scaleValueRef.current) < 0.0005 && Math.abs(scaleVelocityRef.current) < 0.0005) {
+        scaleValueRef.current = scaleTargetRef.current;
+        scaleVelocityRef.current = 0;
+        mascot.el.style.setProperty("--pet-scale", String(scaleValueRef.current));
+        scaleFrameRef.current = null;
+        return;
+      }
+      scaleFrameRef.current = window.requestAnimationFrame(animateScale);
+    };
+    scaleFrameRef.current = window.requestAnimationFrame(animateScale);
+  }, [settings.size]);
+
+  useEffect(() => {
+    // Keep a stable transparent canvas while the model is being scaled. The
+    // native window only changes when a character's footprint changes.
+    const canvasSettings = { ...settings, size: MAX_MASCOT_SIZE };
+    const size = petWindowSize(canvasSettings);
+    void invoke("resize_main_window", { width: size.width, height: size.height }).catch(() => {
+      // Browser previews do not expose native window sizing or positioning APIs.
+    });
+  }, [settings.character]);
 
   useEffect(() => { mascotRef.current?.setEmotion(activeEmotion); }, [activeEmotion]);
 
@@ -318,6 +367,7 @@ function PetWindow() {
 
   useEffect(() => () => {
     if (happyResetTimerRef.current !== null) window.clearTimeout(happyResetTimerRef.current);
+    if (scaleFrameRef.current !== null) window.cancelAnimationFrame(scaleFrameRef.current);
   }, []);
 
   const startDragging = async (event: React.PointerEvent<HTMLElement>) => {
@@ -369,13 +419,13 @@ function SettingsWindow() {
   useEffect(() => {
     document.documentElement.lang = dashboardPreferences.locale;
     document.title = text.dashboardLabel;
-  }, [dashboardPreferences.locale, text.dashboardLabel]);
+  }, [dashboardPreferences.locale]);
 
   useEffect(() => {
     if (!previewRef.current || !livelyMascot) return;
     const mascot = livelyMascot.createMascot(previewRef.current, {
       type: settings.character,
-      size: 210,
+      size: 168,
       color: settings.bodyColor,
       outline: settings.outlineColor,
       accent: settings.accentColor,
@@ -417,7 +467,7 @@ function SettingsWindow() {
 
   return <main className={`settings-shell theme-${dashboardPreferences.theme}`}>
     <header className="settings-header">
-      <div className="settings-intro"><span className="settings-kicker">{text.dashboardLabel}</span><p>{text.subtitle}</p></div>
+      <div className="settings-intro"><h1>{text.characterModel}</h1><p>{text.subtitle}</p></div>
       <div className="dashboard-preferences">
         <div className="preference-control"><span>{text.language}</span><div className="segmented"><button type="button" className={dashboardPreferences.locale === "zh-CN" ? "selected" : ""} onClick={() => updateDashboardPreference("locale", "zh-CN")}>中文</button><button type="button" className={dashboardPreferences.locale === "en" ? "selected" : ""} onClick={() => updateDashboardPreference("locale", "en")}>EN</button></div></div>
         <div className="preference-control"><span>{text.theme}</span><div className="segmented"><button type="button" className={dashboardPreferences.theme === "light" ? "selected" : ""} onClick={() => updateDashboardPreference("theme", "light")}>{text.light}</button><button type="button" className={dashboardPreferences.theme === "dark" ? "selected" : ""} onClick={() => updateDashboardPreference("theme", "dark")}>{text.dark}</button></div></div>
@@ -426,7 +476,7 @@ function SettingsWindow() {
     </header>
     <div className="settings-layout">
       <aside className="preview-pane">
-        <div className="preview-stage"><div ref={previewRef} className="preview-host" /><span className="preview-status">{dashboardPreferences.locale === "zh-CN" ? livelyMascot?.emotions[previewEmotion]?.desc ?? text.idle : livelyMascot?.emotions[previewEmotion]?.name ?? text.idle}</span></div>
+        <div className="preview-stage"><div ref={previewRef} className="preview-host" /></div>
         <div className="character-picker">
           <span className="control-label">{text.characterModel}</span>
           <div className="character-grid">{characters.map((character) => <button key={character.id} type="button" className={settings.character === character.id ? "selected" : ""} onClick={() => selectCharacter(character.id)}><CharacterPreview character={character.id} settings={settings} /><small>{character.name[dashboardPreferences.locale]}</small></button>)}</div>
@@ -434,14 +484,14 @@ function SettingsWindow() {
       </aside>
       <section className="settings-controls">
         <div className="control-section"><div className="section-title"><div><span className="control-label">BEHAVIOR</span><h2>{text.behavior}</h2></div><button className="reset-button" type="button" onClick={() => { setSettings(DEFAULT_SETTINGS); localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SETTINGS)); void emitTo("main", "mascot-settings-update", DEFAULT_SETTINGS); }}>{text.reset}</button></div>
-          <div className="control-row"><label htmlFor="size">{text.size}</label><div className="range-wrap"><input id="size" type="range" min="140" max="280" step="10" value={settings.size} onChange={(event) => update("size", Number(event.target.value))} /><output>{settings.size}px</output></div></div>
+          <div className="control-row"><label htmlFor="size">{text.size}</label><div className="range-wrap"><input id="size" type="range" min="80" max="160" step="10" value={settings.size} onChange={(event) => update("size", Number(event.target.value))} /><output>{settings.size}px</output></div></div>
           <div className="control-row"><span>{text.viewMode}</span><div className="segmented">{(["2d", "3d"] as ViewMode[]).map((mode) => <button key={mode} type="button" className={settings.viewMode === mode ? "selected" : ""} onClick={() => update("viewMode", mode)}>{mode.toUpperCase()}</button>)}</div></div>
           <label className="toggle-row"><span><strong>{text.followCursor}</strong><small>{text.followHint}</small></span><input type="checkbox" checked={settings.followCursor} onChange={(event) => update("followCursor", event.target.checked)} /><i /></label>
           <label className="toggle-row"><span><strong>{text.outline}</strong><small>{text.outlineHint}</small></span><input type="checkbox" checked={settings.outlineVisible} onChange={(event) => update("outlineVisible", event.target.checked)} /><i /></label>
           <div className="color-row"><label>{text.bodyColor}<input type="color" value={settings.bodyColor} onChange={(event) => update("bodyColor", event.target.value)} /></label><label>{text.outlineColor}<input type="color" value={settings.outlineColor} onChange={(event) => update("outlineColor", event.target.value)} /></label><label>{text.accentColor}<input type="color" value={settings.accentColor} onChange={(event) => update("accentColor", event.target.value)} /></label></div>
         </div>
         <div className="control-section emotion-section"><div className="section-title"><div><span className="control-label">EMOTIONS</span><h2>{text.emotions}</h2></div><div className="emotion-actions"><span className="emotion-count">{Object.keys(livelyMascot?.emotions ?? {}).length} {text.emotionCount}</span><button className="apply-emotion-button" type="button" onClick={() => update("emotion", previewEmotion)}>{text.setEmotion}</button></div></div>
-          <div className="emotion-scroll">{groupedEmotions.map((group) => <div className="emotion-group" key={group.id}><h3>{dashboardPreferences.locale === "zh-CN" ? group.name : englishEmotionGroups[group.id] ?? group.id}</h3><div className="emotion-grid">{group.emotions.map((emotion) => <button key={emotion.id} type="button" className={previewEmotion === emotion.id ? "selected" : ""} onClick={() => setPreviewEmotion(emotion.id)}><span>{dashboardPreferences.locale === "zh-CN" ? emotion.desc : emotion.name}</span><small>{emotion.id}</small></button>)}</div></div>)}</div>
+          <div className="emotion-scroll">{groupedEmotions.map((group) => <div className="emotion-group" key={group.id}><h3>{dashboardPreferences.locale === "zh-CN" ? group.name : englishEmotionGroups[group.id] ?? group.id}</h3><div className="emotion-grid">{group.emotions.map((emotion) => <button key={emotion.id} type="button" className={previewEmotion === emotion.id ? "selected" : ""} onClick={() => setPreviewEmotion(emotion.id)}><CharacterPreview character={settings.character} settings={settings} emotion={emotion.id} size={48} className="emotion-thumb" /><span>{dashboardPreferences.locale === "zh-CN" ? emotion.desc : emotion.name}</span><small>{emotion.id}</small></button>)}</div></div>)}</div>
         </div>
       </section>
     </div>

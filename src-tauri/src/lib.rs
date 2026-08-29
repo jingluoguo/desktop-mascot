@@ -1,4 +1,4 @@
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
 use tauri_plugin_opener::OpenerExt;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -31,6 +31,35 @@ fn position_main_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
     let y = work_area.position.y + work_area.size.height as i32 - outer_size.height as i32 - margin;
     window
         .set_position(tauri::PhysicalPosition::new(x, y))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn resize_main_window<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window is unavailable".to_string())?;
+    let scale_factor = window.scale_factor().map_err(|error| error.to_string())?;
+    let old_size = window.outer_size().map_err(|error| error.to_string())?;
+    let old_position = window.outer_position().map_err(|error| error.to_string())?;
+    let next_size = PhysicalSize::new(
+        (width * scale_factor).round().max(1.0) as u32,
+        (height * scale_factor).round().max(1.0) as u32,
+    );
+    let delta_x = (next_size.width as i32 - old_size.width as i32) / 2;
+    let delta_y = (next_size.height as i32 - old_size.height as i32) / 2;
+    window
+        .set_size(next_size)
+        .map_err(|error| error.to_string())?;
+    window
+        .set_position(PhysicalPosition::new(
+            old_position.x - delta_x,
+            old_position.y - delta_y,
+        ))
         .map_err(|error| error.to_string())
 }
 
@@ -92,7 +121,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             open_author_page,
-            position_main_window
+            position_main_window,
+            resize_main_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
