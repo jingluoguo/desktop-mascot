@@ -185,10 +185,13 @@ pub fn run() {
         )
         .setup(|app| {
             app.manage(ShortcutBindingsState::default());
-            // Accessory apps stay available from the menu bar without a Dock icon.
+            // Accessory apps stay available from the menu bar without a Dock icon (macOS only).
+            #[cfg(target_os = "macos")]
             let _ = app
                 .handle()
                 .set_activation_policy(tauri::ActivationPolicy::Accessory);
+            #[cfg(not(target_os = "macos"))]
+            let _ = app.handle();
             let _ = position_main_window(app.handle().clone());
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_focusable(true);
