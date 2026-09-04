@@ -1,0 +1,84 @@
+import type { createMascot as CreateMascot, EmotionDefinition, ViewMode } from "lively-mascot";
+type MascotSettings = {
+  character: string;
+  emotion: string;
+  size: number;
+  viewMode: ViewMode;
+  outlineVisible: boolean;
+  followCursor: boolean;
+  bodyColor: string;
+  outlineColor: string;
+  accentColor: string;
+  globalShortcut: string;
+  dashboardShortcut: string;
+  faceVariant: "default" | "simple" | "dot";
+  accessories: Record<string, boolean>;
+};
+
+type ShortcutSettingKey = "globalShortcut" | "dashboardShortcut";
+
+type LivelyMascotApi = {
+  createMascot: typeof CreateMascot;
+  emotions: Record<string, EmotionDefinition>;
+  emotionGroups: Record<string, { name: string; order: number }>;
+  models: Record<string, {
+    name: string;
+    parts?: Record<string, unknown>;
+    gaze?: { scope?: "model" | "eyes" };
+    rig?: { blink?: boolean; gaze?: boolean; hop?: boolean; spin?: boolean };
+    accessories?: Record<string, { default: boolean; actions: string[] }>;
+    presentation?: { labels?: { zh?: string; en?: string }; icon?: string; theme?: { body?: string; outline?: string; accent?: string } };
+  }>;
+};
+
+type CustomModelSummary = { id: string; name: string; version: string; author: string };
+type CustomModelSources = { id: string; model_js: string; model_css: string; model_json: string };
+type ModelAction = "export" | "delete";
+
+type DashboardTheme = "light" | "dark";
+type DashboardLocale = "zh-CN" | "en";
+type DashboardTab = "appearance" | "behavior" | "emotions" | "about";
+type DashboardPreferences = {
+  theme: DashboardTheme;
+  locale: DashboardLocale;
+};
+
+type AuthorLink = {
+  label: string;
+  url: string;
+};
+
+type AuthorTag = {
+  id: string;
+  name: string;
+  color: string;
+};
+
+type AuthorWork = {
+  id: string;
+  type: string;
+  version: string;
+  title: string;
+  description: string;
+  link: string;
+  cover: string;
+  tags: string[];
+  status: boolean;
+  featured: boolean;
+  releasedAt: string;
+};
+
+type AuthorData = {
+  schemaVersion: string;
+  updatedAt: string;
+  author: {
+    id: string;
+    name: string;
+    bio: string;
+    avatar: string;
+    links: AuthorLink[];
+  };
+  tags: AuthorTag[];
+  works: AuthorWork[];
+};
+export type { MascotSettings, ShortcutSettingKey, LivelyMascotApi, CustomModelSummary, CustomModelSources, ModelAction, DashboardTheme, DashboardLocale, DashboardTab, DashboardPreferences, AuthorLink, AuthorTag, AuthorWork, AuthorData };
