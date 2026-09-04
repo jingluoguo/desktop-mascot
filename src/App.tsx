@@ -30,7 +30,11 @@ type LivelyMascotApi = {
   createMascot: typeof CreateMascot;
   emotions: Record<string, EmotionDefinition>;
   emotionGroups: Record<string, { name: string; order: number }>;
+  models: Record<string, { name: string; presentation?: { labels?: { zh?: string; en?: string }; icon?: string; theme?: { body?: string; outline?: string; accent?: string } } }>;
 };
+
+type CustomModelSummary = { id: string; name: string; version: string };
+type CustomModelSources = { id: string; model_js: string; model_css: string };
 
 type DashboardTheme = "light" | "dark";
 type DashboardLocale = "zh-CN" | "en";
@@ -155,6 +159,9 @@ const uiText = {
     recordShortcut: "录制快捷键",
     recordingShortcut: "请按下快捷键…",
     shortcutConflict: "该快捷键已被占用，请尝试其他组合",
+    importModel: "导入模型",
+    modelImported: "模型已导入",
+    modelImportError: "模型导入失败",
   },
   en: {
     dashboardLabel: "Dashboard",
@@ -204,6 +211,9 @@ const uiText = {
     recordShortcut: "Record shortcut",
     recordingShortcut: "Press a shortcut…",
     shortcutConflict: "This shortcut is already in use. Try another combination.",
+    importModel: "Import model",
+    modelImported: "Model imported",
+    modelImportError: "Model import failed",
   },
 } as const;
 
@@ -229,6 +239,28 @@ const defaultThemes: Record<string, Pick<MascotSettings, "bodyColor" | "outlineC
 };
 
 const getLivelyMascot = () => (window as Window & { LivelyMascot?: LivelyMascotApi }).LivelyMascot;
+
+const loadCustomModels = async (): Promise<CustomModelSummary[]> => {
+  const summaries = await invoke<CustomModelSummary[]>("list_custom_models");
+  for (const summary of summaries) {
+    const sources = await invoke<CustomModelSources>("read_custom_model", { id: summary.id });
+    const styleId = `lively-custom-model-css-${summary.id}`;
+    const scriptId = `lively-custom-model-js-${summary.id}`;
+    document.getElementById(styleId)?.remove();
+    document.getElementById(scriptId)?.remove();
+    const style = document.createElement("style");
+    style.id = styleId;
+    style.dataset.livelyCustomModel = summary.id;
+    style.textContent = sources.model_css;
+    document.head.appendChild(style);
+    const script = document.createElement("script");
+    script.id = scriptId;
+    script.dataset.livelyCustomModel = summary.id;
+    script.text = sources.model_js;
+    document.head.appendChild(script);
+  }
+  return summaries;
+};
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const stringValue = (value: unknown) => typeof value === "string" ? value.trim() : "";
 const booleanValue = (value: unknown) => typeof value === "boolean" ? value : undefined;
@@ -442,7 +474,7 @@ function CharacterPreview({ character, settings, emotion = "02", size = 36, clas
   return <div ref={hostRef} className={`character-thumb-host ${className}`} aria-hidden="true" />;
 }
 
-function PetWindow() {
+function PetWindow({ modelRegistryVersion }: { modelRegistryVersion: number }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const mascotRef = useRef<MascotInstance | null>(null);
   const happyResetTimerRef = useRef<number | null>(null);
@@ -482,6 +514,7 @@ function PetWindow() {
         listen("open-settings", () => {
           void openSettingsWindow(settingsRef.current);
         }),
+        listen("custom-models-updated", () => { void loadCustomModels(); }),
       ]);
       if (disposed) {
         registered.forEach((unlisten) => unlisten());
@@ -527,7 +560,7 @@ function PetWindow() {
     return () => { mascot.destroy(); mascotRef.current = null; };
     // Recreate only when structural appearance settings change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.character, settings.viewMode, settings.outlineVisible, settings.followCursor, settings.bodyColor, settings.outlineColor, settings.accentColor]);
+  }, [modelRegistryVersion, settings.character, settings.viewMode, settings.outlineVisible, settings.followCursor, settings.bodyColor, settings.outlineColor, settings.accentColor]);
 
   useEffect(() => {
     const target = settings.size / MAX_MASCOT_SIZE;
@@ -698,6 +731,9 @@ function SettingsWindow() {
   const [authorData, setAuthorData] = useState<AuthorData | null>(loadCachedAuthorData);
   const [authorDataState, setAuthorDataState] = useState<"loading" | "ready" | "cached" | "error">(() => loadCachedAuthorData() ? "cached" : "loading");
   const [authorLoadAttempt, setAuthorLoadAttempt] = useState(0);
+  const [customModels, setCustomModels] = useState<CustomModelSummary[]>([]);
+  const [modelRegistryVersion, setModelRegistryVersion] = useState(0);
+  const [modelImportState, setModelImportState] = useState<"idle" | "ready" | "error">("idle");
   const visibilityShortcutButtonRef = useRef<HTMLButtonElement>(null);
   const dashboardShortcutButtonRef = useRef<HTMLButtonElement>(null);
   const shortcutsBeforeRecordingRef = useRef({
@@ -707,6 +743,15 @@ function SettingsWindow() {
   const tabButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const text = uiText[dashboardPreferences.locale];
   const livelyMascot = getLivelyMascot();
+  const refreshCustomModels = async () => {
+    try {
+      const loaded = await loadCustomModels();
+      setCustomModels(loaded);
+      setModelRegistryVersion((version) => version + 1);
+    } catch {
+      setCustomModels([]);
+    }
+  };
   const dashboardTabs: Array<{ id: DashboardTab; label: string; eyebrow: string }> = [
     { id: "appearance", label: text.appearanceTab, eyebrow: text.appearanceEyebrow },
     { id: "behavior", label: text.behaviorTab, eyebrow: text.behaviorEyebrow },
@@ -726,6 +771,10 @@ function SettingsWindow() {
         return result;
       }, []);
   }, [livelyMascot]);
+
+  useEffect(() => {
+    void refreshCustomModels();
+  }, []);
 
   useEffect(() => {
     let stopState: (() => void) | undefined;
@@ -779,7 +828,7 @@ function SettingsWindow() {
     previewMascotRef.current = mascot;
     mascot.setEmotion(previewEmotion);
     return () => { mascot.destroy(); previewMascotRef.current = null; };
-  }, [activeTab, livelyMascot, settings.character, settings.viewMode, settings.outlineVisible, settings.bodyColor, settings.outlineColor, settings.accentColor]);
+  }, [activeTab, livelyMascot, modelRegistryVersion, settings.character, settings.viewMode, settings.outlineVisible, settings.bodyColor, settings.outlineColor, settings.accentColor]);
 
   useEffect(() => { previewMascotRef.current?.setEmotion(previewEmotion); }, [previewEmotion]);
 
@@ -857,10 +906,34 @@ function SettingsWindow() {
     setRecordingShortcut(null);
   };
   const selectCharacter = (character: string) => {
-    const next = { ...settings, character, ...defaultThemes[character] };
+    const modelTheme = livelyMascot?.models?.[character]?.presentation?.theme;
+    const next = { ...settings, character, ...defaultThemes[character], ...(modelTheme ? {
+      bodyColor: modelTheme.body ?? settings.bodyColor,
+      outlineColor: modelTheme.outline ?? settings.outlineColor,
+      accentColor: modelTheme.accent ?? settings.accentColor,
+    } : {}) };
     setSettings(next);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     void emitTo("main", "mascot-settings-update", next);
+  };
+  const importModel = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    const byName = new Map(files.map((file) => [file.name.toLowerCase(), file]));
+    const modelJs = byName.get("model.js");
+    const modelCss = byName.get("model.css");
+    const modelJson = byName.get("model.json");
+    if (!modelJs || !modelCss || !modelJson) { setModelImportState("error"); return; }
+    try {
+      const manifest = JSON.parse(await modelJson.text()) as { id?: unknown };
+      if (typeof manifest.id !== "string" || !/^[a-z0-9_-]+$/i.test(manifest.id)) throw new Error("invalid model id");
+      await invoke("install_custom_model", { upload: { id: manifest.id, model_js: await modelJs.text(), model_css: await modelCss.text(), model_json: JSON.stringify(manifest) } });
+      await refreshCustomModels();
+      setModelImportState("ready");
+      void emitTo("main", "custom-models-updated");
+    } catch {
+      setModelImportState("error");
+    }
   };
   const updateDashboardPreference = <K extends keyof DashboardPreferences>(key: K, value: DashboardPreferences[K]) => {
     const next = { ...dashboardPreferences, [key]: value };
@@ -912,7 +985,7 @@ function SettingsWindow() {
       <div className="dashboard-sidebar-footer">
         <div className="preference-control"><span>{text.language}</span><div className="segmented"><button type="button" className={dashboardPreferences.locale === "zh-CN" ? "selected" : ""} onClick={() => updateDashboardPreference("locale", "zh-CN")}>中文</button><button type="button" className={dashboardPreferences.locale === "en" ? "selected" : ""} onClick={() => updateDashboardPreference("locale", "en")}>EN</button></div></div>
         <div className="preference-control"><span>{text.theme}</span><div className="segmented"><button type="button" className={dashboardPreferences.theme === "light" ? "selected" : ""} onClick={() => updateDashboardPreference("theme", "light")}>{text.light}</button><button type="button" className={dashboardPreferences.theme === "dark" ? "selected" : ""} onClick={() => updateDashboardPreference("theme", "dark")}>{text.dark}</button></div></div>
-        <span className="dashboard-version">v0.1.0</span>
+        <span className="dashboard-version">v0.1.0 · lively 0.3.0</span>
       </div>
     </aside>
     <section className="dashboard-workspace">
@@ -929,7 +1002,9 @@ function SettingsWindow() {
             <div className="settings-groups">
               <section className="settings-group character-picker">
                 <div className="group-heading"><span className="control-label">MODEL</span><h2>{text.characterModel}</h2></div>
-                <div className="character-grid">{characters.map((character) => <button key={character.id} type="button" className={settings.character === character.id ? "selected" : ""} onClick={() => selectCharacter(character.id)}><CharacterPreview character={character.id} settings={settings} /><small>{character.name[dashboardPreferences.locale]}</small></button>)}</div>
+                <div className="character-grid">{characters.map((character) => <button key={character.id} type="button" className={settings.character === character.id ? "selected" : ""} onClick={() => selectCharacter(character.id)}><CharacterPreview character={character.id} settings={settings} /><small>{character.name[dashboardPreferences.locale]}</small></button>)}{customModels.map((model) => { const labels = livelyMascot?.models?.[model.id]?.presentation?.labels; const name = dashboardPreferences.locale === "zh-CN" ? labels?.zh || model.name : labels?.en || model.name; return <button key={model.id} type="button" className={settings.character === model.id ? "selected" : ""} onClick={() => selectCharacter(model.id)}><CharacterPreview character={model.id} settings={settings} /><small>{name}</small></button>; })}</div>
+                <label className="model-import-button"><input type="file" accept=".js,.css,.json" multiple onChange={importModel} />{text.importModel}</label>
+                {modelImportState !== "idle" && <small className={`model-import-status ${modelImportState}`}>{modelImportState === "ready" ? text.modelImported : text.modelImportError}</small>}
               </section>
               <section className="settings-group">
                 <div className="group-heading"><span className="control-label">STYLE</span><h2>{text.behavior}</h2></div>
@@ -996,11 +1071,19 @@ function SettingsWindow() {
   </main>;
 }
 
+function PetRoot() {
+  const [modelRegistryVersion, setModelRegistryVersion] = useState(0);
+  useEffect(() => {
+    void loadCustomModels().then(() => setModelRegistryVersion((version) => version + 1)).catch(() => undefined);
+  }, []);
+  return <PetWindow modelRegistryVersion={modelRegistryVersion} />;
+}
+
 function App() {
   const view = new URLSearchParams(window.location.search).get("view");
   if (view === "settings") return <SettingsWindow />;
   if (view === "context-menu") return <ContextMenuWindow />;
-  return <PetWindow />;
+  return <PetRoot />;
 }
 
 export default App;

@@ -366,6 +366,12 @@ button { font: inherit; }
 .dashboard-panel .character-grid button:hover { border-color: #52615e; background: #1d2423; transform: none; }
 .dashboard-panel .character-grid button:active { transform: scale(.975); }
 .dashboard-panel .character-grid button.selected { color: #eaf8f4; border-color: var(--accent); background: var(--accent-soft); transform: none; }
+.model-import-button { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; margin-top: 12px; padding: 0 13px; color: var(--accent); border: 1px solid #3a5552; border-radius: 7px; background: transparent; font-size: 11px; cursor: pointer; }
+.model-import-button:hover { color: #102124; border-color: var(--accent); background: var(--accent); }
+.model-import-button input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+.model-import-status { display: block; margin-top: 8px; color: var(--muted); font-size: 10px; }
+.model-import-status.error { color: #ef9f83; }
+.model-import-status.ready { color: var(--accent); }
 .dashboard-panel .control-row,
 .dashboard-panel .toggle-row,
 .dashboard-panel .shortcut-row { min-height: 56px; border-color: var(--line); }
@@ -491,6 +497,8 @@ button.work-card:focus-visible { outline: 2px solid var(--accent); outline-offse
 .theme-light .dashboard-panel .emotion-grid button:hover { border-color: #9eaaa6; background: #f8faf9; }
 .theme-light .dashboard-panel .character-grid button.selected,
 .theme-light .dashboard-panel .emotion-grid button.selected { color: #174d4d; border-color: var(--accent); background: var(--accent-soft); }
+.theme-light .model-import-button { border-color: #b9d0cc; }
+.theme-light .model-import-button:hover { color: #fff; border-color: var(--accent); background: var(--accent); }
 .theme-light .dashboard-panel-about { background: radial-gradient(720px 260px at 16% 0%, rgba(24, 127, 129, .06), transparent 68%), radial-gradient(560px 220px at 94% 10%, rgba(169, 80, 57, .04), transparent 70%); }
 .theme-light .author-mark { border-color: rgba(24, 127, 129, .3); background: linear-gradient(160deg, rgba(24, 127, 129, .07), rgba(169, 80, 57, .05)); box-shadow: 0 18px 38px rgba(45, 62, 57, .12); }
 .theme-light .author-mark img { box-shadow: 0 0 0 1px rgba(32, 38, 36, .1), 0 10px 22px rgba(45, 62, 57, .14); }

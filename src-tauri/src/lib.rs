@@ -1,3 +1,6 @@
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::Path;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -15,6 +18,167 @@ struct ShortcutBindingsState {
 struct ShortcutBindings {
     visibility: Option<u32>,
     dashboard: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+struct CustomModelSummary {
+    id: String,
+    name: String,
+    version: String,
+}
+
+#[derive(Debug, Serialize)]
+struct CustomModelSources {
+    id: String,
+    model_js: String,
+    model_css: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CustomModelUpload {
+    id: String,
+    model_js: String,
+    model_css: String,
+    model_json: String,
+}
+
+fn custom_models_dir<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<std::path::PathBuf, String> {
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("models");
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    Ok(directory)
+}
+
+fn valid_model_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 80
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+fn model_summary_from_manifest(path: &Path) -> Result<CustomModelSummary, String> {
+    let manifest = serde_json::from_str::<serde_json::Value>(
+        &fs::read_to_string(path.join("model.json")).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("model.json is invalid: {error}"))?;
+    let id = manifest
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let presentation = manifest.get("presentation");
+    let name = manifest
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            presentation
+                .and_then(|value| value.get("labels"))
+                .and_then(|value| value.get("en"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .or_else(|| {
+            presentation
+                .and_then(|value| value.get("labels"))
+                .and_then(|value| value.get("zh"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .unwrap_or(&id)
+        .trim()
+        .to_string();
+    let version = manifest
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if !valid_model_id(&id) || name.is_empty() || name.len() > 160 || version.len() > 40 {
+        return Err("model.json must contain a valid id and name".to_string());
+    }
+    Ok(CustomModelSummary { id, name, version })
+}
+
+#[tauri::command]
+fn list_custom_models<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Vec<CustomModelSummary>, String> {
+    let directory = custom_models_dir(&app)?;
+    let mut models = fs::read_dir(directory)
+        .map_err(|error| error.to_string())?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false))
+        .filter_map(|entry| model_summary_from_manifest(&entry.path()).ok())
+        .collect::<Vec<_>>();
+    models.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    Ok(models)
+}
+
+#[tauri::command]
+fn read_custom_model<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    id: String,
+) -> Result<CustomModelSources, String> {
+    if !valid_model_id(&id) {
+        return Err("invalid model id".to_string());
+    }
+    let directory = custom_models_dir(&app)?.join(&id);
+    let summary = model_summary_from_manifest(&directory)?;
+    Ok(CustomModelSources {
+        id: summary.id,
+        model_js: fs::read_to_string(directory.join("model.js"))
+            .map_err(|error| error.to_string())?,
+        model_css: fs::read_to_string(directory.join("model.css"))
+            .map_err(|error| error.to_string())?,
+    })
+}
+
+#[tauri::command]
+fn install_custom_model<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    upload: CustomModelUpload,
+) -> Result<CustomModelSummary, String> {
+    const MAX_SOURCE_SIZE: usize = 2 * 1024 * 1024;
+    if !valid_model_id(&upload.id) || upload.id.is_empty() {
+        return Err(
+            "model id must contain only letters, numbers, hyphens, or underscores".to_string(),
+        );
+    }
+    if [
+        upload.model_js.len(),
+        upload.model_css.len(),
+        upload.model_json.len(),
+    ]
+    .iter()
+    .any(|size| *size > MAX_SOURCE_SIZE)
+    {
+        return Err("model files are too large (2 MB maximum each)".to_string());
+    }
+    if !upload.model_js.contains("defineModel") {
+        return Err("model.js is not a lively-mascot 0.3 model".to_string());
+    }
+    let manifest = serde_json::from_str::<serde_json::Value>(&upload.model_json)
+        .map_err(|error| format!("model.json is invalid: {error}"))?;
+    let manifest_id = manifest
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    if manifest_id != upload.id {
+        return Err("the selected model id does not match model.json".to_string());
+    }
+    let directory = custom_models_dir(&app)?.join(&upload.id);
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    fs::write(directory.join("model.js"), upload.model_js).map_err(|error| error.to_string())?;
+    fs::write(directory.join("model.css"), upload.model_css).map_err(|error| error.to_string())?;
+    fs::write(directory.join("model.json"), upload.model_json)
+        .map_err(|error| error.to_string())?;
+    model_summary_from_manifest(&directory)
 }
 
 fn set_main_window_visibility(app: &tauri::AppHandle, visible: bool) -> Result<(), String> {
@@ -253,7 +417,10 @@ pub fn run() {
             hide_main_window,
             set_global_shortcuts,
             position_main_window,
-            resize_main_window
+            resize_main_window,
+            list_custom_models,
+            read_custom_model,
+            install_custom_model
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
