@@ -65,7 +65,9 @@ public/              Vite 静态资源
 
 ## 导入自定义模型
 
-在仪表盘的“角色模型”区域选择“导入模型”，一次选中模型目录中的 `model.js`、`model.css` 和 `model.json`。这些文件应由 `lively-mascot` 内的图片模型 Skill 生成，并且 `model.json` 中的 `id` 需要与模型定义一致。应用会把模型复制到系统应用数据目录下的 `models/`，因此安装新版本时不会覆盖。
+在仪表盘的“角色模型”区域，可以将 `.livelymodel` 文件拖入导入区域，也可以点击选择文件。`.livelymodel` 是 ZIP 格式的模型包，必须包含 `model.js`、`model.css` 和 `model.json`；也支持同时选择这三个文件。文件应由 `lively-mascot` 内的图片模型 Skill 生成，并且 `model.json` 中的 `id` 需要与模型定义一致。
+
+用户模型可以导出为 `.livelymodel`、覆盖导入或删除。内置模型不能被删除或覆盖。应用会把用户模型复制到系统应用数据目录下的 `models/`，因此安装新版本时不会覆盖。
 
 ## 许可
 

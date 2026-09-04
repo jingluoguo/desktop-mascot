@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { createMascot as CreateMascot, EmotionDefinition, MascotInstance, ViewMode } from "lively-mascot";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
+import type { createMascot as CreateMascot, EmotionDefinition, MascotInstance, ModelCapabilities, ViewMode } from "lively-mascot";
 import "lively-mascot/dist/lively-mascot.min.js";
 import "lively-mascot/dist/lively-mascot.min.css";
 import "./App.css";
@@ -22,6 +23,8 @@ type MascotSettings = {
   accentColor: string;
   globalShortcut: string;
   dashboardShortcut: string;
+  faceVariant: "default" | "simple" | "dot";
+  accessories: Record<string, boolean>;
 };
 
 type ShortcutSettingKey = "globalShortcut" | "dashboardShortcut";
@@ -30,11 +33,19 @@ type LivelyMascotApi = {
   createMascot: typeof CreateMascot;
   emotions: Record<string, EmotionDefinition>;
   emotionGroups: Record<string, { name: string; order: number }>;
-  models: Record<string, { name: string; presentation?: { labels?: { zh?: string; en?: string }; icon?: string; theme?: { body?: string; outline?: string; accent?: string } } }>;
+  models: Record<string, {
+    name: string;
+    parts?: Record<string, unknown>;
+    gaze?: { scope?: "model" | "eyes" };
+    rig?: { blink?: boolean; gaze?: boolean; hop?: boolean; spin?: boolean };
+    accessories?: Record<string, { default: boolean; actions: string[] }>;
+    presentation?: { labels?: { zh?: string; en?: string }; icon?: string; theme?: { body?: string; outline?: string; accent?: string } };
+  }>;
 };
 
-type CustomModelSummary = { id: string; name: string; version: string };
-type CustomModelSources = { id: string; model_js: string; model_css: string };
+type CustomModelSummary = { id: string; name: string; version: string; author: string };
+type CustomModelSources = { id: string; model_js: string; model_css: string; model_json: string };
+type ModelAction = "export" | "delete";
 
 type DashboardTheme = "light" | "dark";
 type DashboardLocale = "zh-CN" | "en";
@@ -84,6 +95,7 @@ type AuthorData = {
 };
 
 const STORAGE_KEY = "nightlight-mascot-settings";
+const SETTINGS_SCHEMA_VERSION = 2;
 const UI_STORAGE_KEY = "desktop-mascot-dashboard-preferences";
 const AUTHOR_DATA_CACHE_KEY = "desktop-mascot-author-data";
 const AUTHOR_DATA_URL = "https://cdn.jsdelivr.net/gh/jingluoguo/jingluo_web@master/author.json";
@@ -99,6 +111,8 @@ const DEFAULT_SETTINGS: MascotSettings = {
   accentColor: "#a9d9ff",
   globalShortcut: "CommandOrControl+Shift+M",
   dashboardShortcut: "CommandOrControl+Shift+D",
+  faceVariant: "default",
+  accessories: {},
 };
 const MAX_MASCOT_SIZE = 160;
 
@@ -137,6 +151,7 @@ const uiText = {
     emotions: "表情状态",
     emotionCount: "种",
     setEmotion: "设置表情",
+    emotionApplied: "已应用到桌面宠物",
     idle: "待机",
     light: "白天",
     dark: "黑夜",
@@ -160,8 +175,38 @@ const uiText = {
     recordingShortcut: "请按下快捷键…",
     shortcutConflict: "该快捷键已被占用，请尝试其他组合",
     importModel: "导入模型",
+    modelTrustHint: "模型脚本将在本地应用窗口中运行，请仅导入来自 lively-mascot Skill 的文件。",
     modelImported: "模型已导入",
+    modelExported: "模型包已导出",
     modelImportError: "模型导入失败",
+    modelFormatHint: "支持 .livelymodel（ZIP 格式），或同时选择 model.js、model.css、model.json。文件应来自 lively-mascot Skill。",
+    dropModel: "拖放模型文件到这里",
+    chooseModel: "选择模型文件",
+    modelPackageContents: "模型包应包含 model.js、model.css 和 model.json。",
+    deleteModel: "删除模型",
+    exportModel: "导出模型",
+    deleteModelConfirm: "确定删除这个用户模型吗？删除后可重新导入，但无法恢复当前副本。",
+    exportModelConfirm: "确定导出这个用户模型吗？将下载一个 .livelymodel 文件。",
+    confirmModelAction: "确认操作",
+    confirm: "确认",
+    cancel: "取消",
+    modelDeleted: "模型已删除",
+    userModel: "用户模型",
+    officialModel: "内置模型",
+    modelCapabilities: "模型能力",
+    modelParts: "部件",
+    modelGaze: "注视",
+    modelMotion: "动作",
+    modelAccessories: "配件",
+    faceVariant: "脸型",
+    faceDefault: "默认",
+    faceSimple: "简洁",
+    faceDot: "点状",
+    noAccessories: "当前模型没有可切换配件",
+    modelImportInvalid: "无法读取模型。请确认模型包包含完整文件，并由 lively-mascot Skill 生成。",
+    modelImportUnsupported: "模型包版本不受支持。请使用 lively-mascot 0.3.0 生成模型。",
+    modelImportTooLarge: "模型文件超过 2 MB 限制，请压缩资源后重试。",
+    modelImportUnsafe: "模型包含不允许的网络、动态代码或应用接口调用。",
   },
   en: {
     dashboardLabel: "Dashboard",
@@ -189,6 +234,7 @@ const uiText = {
     emotions: "Expressions",
     emotionCount: "total",
     setEmotion: "Set expression",
+    emotionApplied: "Applied to desktop mascot",
     idle: "Idle",
     light: "Light",
     dark: "Dark",
@@ -212,10 +258,42 @@ const uiText = {
     recordingShortcut: "Press a shortcut…",
     shortcutConflict: "This shortcut is already in use. Try another combination.",
     importModel: "Import model",
+    modelTrustHint: "Model scripts run in this app window. Import files only from the lively-mascot Skill.",
     modelImported: "Model imported",
+    modelExported: "Model package exported",
     modelImportError: "Model import failed",
+    modelFormatHint: "Supports .livelymodel (ZIP), or model.js, model.css, and model.json selected together. Files should come from the lively-mascot Skill.",
+    dropModel: "Drop model files here",
+    chooseModel: "Choose model files",
+    modelPackageContents: "A model package must contain model.js, model.css, and model.json.",
+    deleteModel: "Delete model",
+    exportModel: "Export model",
+    deleteModelConfirm: "Delete this user model? You can import it again, but this copy cannot be restored.",
+    exportModelConfirm: "Export this user model? A .livelymodel package will be downloaded.",
+    confirmModelAction: "Confirm action",
+    confirm: "Confirm",
+    cancel: "Cancel",
+    modelDeleted: "Model deleted",
+    userModel: "User model",
+    officialModel: "Built-in model",
+    modelCapabilities: "Model capabilities",
+    modelParts: "Parts",
+    modelGaze: "Gaze",
+    modelMotion: "Motion",
+    modelAccessories: "Accessories",
+    faceVariant: "Face",
+    faceDefault: "Default",
+    faceSimple: "Simple",
+    faceDot: "Dot",
+    noAccessories: "This model has no switchable accessories",
+    modelImportInvalid: "The model could not be read. Confirm that the package is complete and was generated by the lively-mascot Skill.",
+    modelImportUnsupported: "This model package version is not supported. Generate the model with lively-mascot 0.3.0.",
+    modelImportTooLarge: "A model file exceeds the 2 MB limit. Reduce its size and try again.",
+    modelImportUnsafe: "The model contains a blocked network, dynamic-code, or app-interface call.",
   },
 } as const;
+
+type UiCopy = { [Key in keyof typeof uiText["zh-CN"]]: string };
 
 const englishEmotionGroups: Record<string, string> = {
   lifecycle: "Lifecycle",
@@ -240,26 +318,108 @@ const defaultThemes: Record<string, Pick<MascotSettings, "bodyColor" | "outlineC
 
 const getLivelyMascot = () => (window as Window & { LivelyMascot?: LivelyMascotApi }).LivelyMascot;
 
+const persistSettings = (settings: MascotSettings) => {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    schemaVersion: SETTINGS_SCHEMA_VERSION,
+    settings,
+  }));
+};
+
 const loadCustomModels = async (): Promise<CustomModelSummary[]> => {
   const summaries = await invoke<CustomModelSummary[]>("list_custom_models");
+  const modelApi = getLivelyMascot();
+  const activeIds = new Set(summaries.map((summary) => summary.id));
+  document.querySelectorAll<HTMLElement>("[data-lively-custom-model]").forEach((element) => {
+    const id = element.dataset.livelyCustomModel;
+    if (id && !activeIds.has(id)) {
+      element.remove();
+      if (modelApi?.models) delete modelApi.models[id];
+    }
+  });
+  const loadedSummaries: CustomModelSummary[] = [];
   for (const summary of summaries) {
-    const sources = await invoke<CustomModelSources>("read_custom_model", { id: summary.id });
-    const styleId = `lively-custom-model-css-${summary.id}`;
-    const scriptId = `lively-custom-model-js-${summary.id}`;
-    document.getElementById(styleId)?.remove();
-    document.getElementById(scriptId)?.remove();
-    const style = document.createElement("style");
-    style.id = styleId;
-    style.dataset.livelyCustomModel = summary.id;
-    style.textContent = sources.model_css;
-    document.head.appendChild(style);
-    const script = document.createElement("script");
-    script.id = scriptId;
-    script.dataset.livelyCustomModel = summary.id;
-    script.text = sources.model_js;
-    document.head.appendChild(script);
+    try {
+      const sources = await invoke<CustomModelSources>("read_custom_model", { id: summary.id });
+      const styleId = `lively-custom-model-css-${summary.id}`;
+      const scriptId = `lively-custom-model-js-${summary.id}`;
+      document.getElementById(styleId)?.remove();
+      document.getElementById(scriptId)?.remove();
+      const style = document.createElement("style");
+      style.id = styleId;
+      style.dataset.livelyCustomModel = summary.id;
+      style.textContent = sources.model_css;
+      document.head.appendChild(style);
+      const script = document.createElement("script");
+      script.id = scriptId;
+      script.dataset.livelyCustomModel = summary.id;
+      script.text = sources.model_js;
+      document.head.appendChild(script);
+      if (!getLivelyMascot()?.models?.[summary.id]) throw new Error("model script did not register its manifest id");
+      loadedSummaries.push(summary);
+    } catch {
+      document.getElementById(`lively-custom-model-css-${summary.id}`)?.remove();
+      document.getElementById(`lively-custom-model-js-${summary.id}`)?.remove();
+      if (modelApi?.models) delete modelApi.models[summary.id];
+    }
   }
-  return summaries;
+  return loadedSummaries;
+};
+
+const MODEL_PACKAGE_EXTENSION = ".livelymodel";
+const MODEL_FILE_NAMES = ["model.js", "model.css", "model.json"] as const;
+type ModelFilePayload = { id: string; model_js: string; model_css: string; model_json: string };
+
+const modelFilesFromSelection = async (files: File[]): Promise<ModelFilePayload> => {
+  const entries = new Map<string, string>();
+  for (const file of files) {
+    if (file.name.toLowerCase().endsWith(MODEL_PACKAGE_EXTENSION)) {
+      const archive = unzipSync(new Uint8Array(await file.arrayBuffer()));
+      Object.entries(archive).forEach(([name, content]) => {
+        const baseName = name.split("/").pop()?.toLowerCase() ?? "";
+        if (MODEL_FILE_NAMES.includes(baseName as typeof MODEL_FILE_NAMES[number])) entries.set(baseName, strFromU8(content));
+      });
+    } else {
+      const baseName = file.name.split("/").pop()?.toLowerCase() ?? "";
+      if (MODEL_FILE_NAMES.includes(baseName as typeof MODEL_FILE_NAMES[number])) entries.set(baseName, await file.text());
+    }
+  }
+  const missing = MODEL_FILE_NAMES.filter((name) => !entries.has(name));
+  if (missing.length > 0) throw new Error(`Missing model files: ${missing.join(", ")}`);
+  const manifest = JSON.parse(entries.get("model.json") ?? "") as { id?: unknown; formatVersion?: unknown };
+  if (manifest.formatVersion !== undefined && manifest.formatVersion !== 1) throw new Error("Unsupported model package version");
+  if (typeof manifest.id !== "string" || !/^[a-z0-9_-]+$/i.test(manifest.id)) throw new Error("Invalid model id");
+  return { id: manifest.id, model_js: entries.get("model.js") ?? "", model_css: entries.get("model.css") ?? "", model_json: entries.get("model.json") ?? "" };
+};
+
+const modelImportErrorText = (error: unknown, text: UiCopy) => {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("unsupported") || message.includes("version")) return text.modelImportUnsupported;
+  if (message.includes("large") || message.includes("2 mb")) return text.modelImportTooLarge;
+  if (message.includes("forbidden") || message.includes("remote") || message.includes("blocked")) return text.modelImportUnsafe;
+  return text.modelImportInvalid;
+};
+
+const modelPackageBlob = (sources: CustomModelSources, manifestJson = sources.model_json) => new Blob([
+  zipSync({
+    "model.js": strToU8(sources.model_js),
+    "model.css": strToU8(sources.model_css),
+    "model.json": strToU8(manifestJson),
+  }),
+], { type: "application/vnd.lively-mascot.model+zip" });
+
+const downloadModelPackage = async (id: string) => {
+  const sources = await invoke<CustomModelSources>("read_custom_model", { id });
+  const manifest = JSON.parse(sources.model_json) as Record<string, unknown>;
+  manifest.formatVersion = 1;
+  const url = URL.createObjectURL(modelPackageBlob(sources, JSON.stringify(manifest, null, 2)));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${id}${MODEL_PACKAGE_EXTENSION}`;
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const stringValue = (value: unknown) => typeof value === "string" ? value.trim() : "";
@@ -349,14 +509,44 @@ const openExternalUrl = (url: string) => {
 };
 const loadSettings = (): MascotSettings => {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Partial<MascotSettings>;
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as unknown;
+    const saved = isRecord(raw) && isRecord(raw.settings)
+      ? raw.settings as Partial<MascotSettings>
+      : isRecord(raw)
+        ? raw as Partial<MascotSettings>
+        : {};
     const savedSize = Number(saved.size);
     const size = savedSize === 260
       ? DEFAULT_SETTINGS.size
       : Number.isFinite(savedSize)
         ? Math.min(160, Math.max(80, savedSize))
         : DEFAULT_SETTINGS.size;
-    return { ...DEFAULT_SETTINGS, ...saved, size };
+    const viewMode = saved.viewMode === "2d" || saved.viewMode === "3d"
+      ? saved.viewMode
+      : DEFAULT_SETTINGS.viewMode;
+    const faceVariant = saved.faceVariant === "simple" || saved.faceVariant === "dot"
+      ? saved.faceVariant
+      : DEFAULT_SETTINGS.faceVariant;
+    const accessories = isRecord(saved.accessories)
+      ? Object.fromEntries(Object.entries(saved.accessories).filter(([, value]) => typeof value === "boolean"))
+      : {};
+    const color = (value: unknown, fallback: string) =>
+      typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+    return {
+      ...DEFAULT_SETTINGS,
+      ...saved,
+      size,
+      viewMode,
+      faceVariant,
+      accessories,
+      outlineVisible: typeof saved.outlineVisible === "boolean" ? saved.outlineVisible : DEFAULT_SETTINGS.outlineVisible,
+      followCursor: typeof saved.followCursor === "boolean" ? saved.followCursor : DEFAULT_SETTINGS.followCursor,
+      bodyColor: color(saved.bodyColor, DEFAULT_SETTINGS.bodyColor),
+      outlineColor: color(saved.outlineColor, DEFAULT_SETTINGS.outlineColor),
+      accentColor: color(saved.accentColor, DEFAULT_SETTINGS.accentColor),
+      globalShortcut: typeof saved.globalShortcut === "string" ? saved.globalShortcut : DEFAULT_SETTINGS.globalShortcut,
+      dashboardShortcut: typeof saved.dashboardShortcut === "string" ? saved.dashboardShortcut : DEFAULT_SETTINGS.dashboardShortcut,
+    };
   } catch {
     return DEFAULT_SETTINGS;
   }
@@ -467,14 +657,20 @@ function CharacterPreview({ character, settings, emotion = "02", size = 36, clas
       hopInterval: null,
       animated: false,
     });
+    mascot.setFaceVariant(settings.faceVariant);
+    const modelAccessories = livelyMascot.models[character]?.accessories ?? {};
+    Object.entries(modelAccessories).forEach(([id, definition]) => {
+      const enabled = settings.accessories[`${character}:${id}`] ?? definition.default;
+      mascot.setAccessory(id, enabled);
+    });
     mascot.setEmotion(emotion);
     return () => mascot.destroy();
-  }, [character, emotion, size, previewTheme.bodyColor, previewTheme.outlineColor, previewTheme.accentColor, settings.viewMode, settings.outlineVisible]);
+  }, [character, emotion, size, previewTheme.bodyColor, previewTheme.outlineColor, previewTheme.accentColor, settings.viewMode, settings.outlineVisible, settings.faceVariant, settings.accessories]);
 
   return <div ref={hostRef} className={`character-thumb-host ${className}`} aria-hidden="true" />;
 }
 
-function PetWindow({ modelRegistryVersion }: { modelRegistryVersion: number }) {
+function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { modelRegistryVersion: number; onModelRegistryReload: () => Promise<void> }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const mascotRef = useRef<MascotInstance | null>(null);
   const happyResetTimerRef = useRef<number | null>(null);
@@ -503,7 +699,7 @@ function PetWindow({ modelRegistryVersion }: { modelRegistryVersion: number }) {
     const registerListeners = async () => {
       const registered = await Promise.all([
         listen<MascotSettings>("mascot-settings-update", ({ payload }) => {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+          persistSettings(payload);
           settingsRef.current = payload;
           setSettings(payload);
           setActiveEmotion(payload.emotion);
@@ -514,7 +710,7 @@ function PetWindow({ modelRegistryVersion }: { modelRegistryVersion: number }) {
         listen("open-settings", () => {
           void openSettingsWindow(settingsRef.current);
         }),
-        listen("custom-models-updated", () => { void loadCustomModels(); }),
+        listen("custom-models-updated", () => { void onModelRegistryReload(); }),
       ]);
       if (disposed) {
         registered.forEach((unlisten) => unlisten());
@@ -527,7 +723,7 @@ function PetWindow({ modelRegistryVersion }: { modelRegistryVersion: number }) {
       disposed = true;
       unlisteners.forEach((unlisten) => unlisten());
     };
-  }, []);
+  }, [onModelRegistryReload]);
 
   useEffect(() => {
     void setGlobalShortcuts(settings).catch(() => undefined);
@@ -554,13 +750,17 @@ function PetWindow({ modelRegistryVersion }: { modelRegistryVersion: number }) {
       hopInterval: null,
       onClick: triggerHappy,
     });
+    mascot.setFaceVariant(settings.faceVariant);
+    Object.entries(livelyMascot.models[settings.character]?.accessories ?? {}).forEach(([id, definition]) => {
+      mascot.setAccessory(id, settings.accessories[`${settings.character}:${id}`] ?? definition.default);
+    });
     mascotRef.current = mascot;
     mascot.el.style.setProperty("--pet-scale", String(settings.size / MAX_MASCOT_SIZE));
     mascot.setEmotion(activeEmotion);
     return () => { mascot.destroy(); mascotRef.current = null; };
     // Recreate only when structural appearance settings change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelRegistryVersion, settings.character, settings.viewMode, settings.outlineVisible, settings.followCursor, settings.bodyColor, settings.outlineColor, settings.accentColor]);
+  }, [modelRegistryVersion, settings.character, settings.viewMode, settings.faceVariant, settings.accessories, settings.outlineVisible, settings.followCursor, settings.bodyColor, settings.outlineColor, settings.accentColor]);
 
   useEffect(() => {
     const target = settings.size / MAX_MASCOT_SIZE;
@@ -723,6 +923,7 @@ function SettingsWindow() {
   const previewMascotRef = useRef<MascotInstance | null>(null);
   const [settings, setSettings] = useState(loadSettings);
   const [previewEmotion, setPreviewEmotion] = useState(settings.emotion);
+  const [emotionApplied, setEmotionApplied] = useState(false);
   const [dashboardPreferences, setDashboardPreferences] = useState(loadDashboardPreferences);
   const [activeTab, setActiveTab] = useState<DashboardTab>("appearance");
   const [recordingShortcut, setRecordingShortcut] = useState<ShortcutSettingKey | null>(null);
@@ -734,6 +935,11 @@ function SettingsWindow() {
   const [customModels, setCustomModels] = useState<CustomModelSummary[]>([]);
   const [modelRegistryVersion, setModelRegistryVersion] = useState(0);
   const [modelImportState, setModelImportState] = useState<"idle" | "ready" | "error">("idle");
+  const [modelImportMessage, setModelImportMessage] = useState("");
+  const [modelDragActive, setModelDragActive] = useState(false);
+  const [modelActionFeedback, setModelActionFeedback] = useState<string | null>(null);
+  const [pendingModelAction, setPendingModelAction] = useState<{ id: string; action: ModelAction } | null>(null);
+  const [runtimeCapabilities, setRuntimeCapabilities] = useState<ModelCapabilities | null>(null);
   const visibilityShortcutButtonRef = useRef<HTMLButtonElement>(null);
   const dashboardShortcutButtonRef = useRef<HTMLButtonElement>(null);
   const shortcutsBeforeRecordingRef = useRef({
@@ -792,6 +998,15 @@ function SettingsWindow() {
   }, [dashboardPreferences.locale]);
 
   useEffect(() => {
+    if (!pendingModelAction) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPendingModelAction(null);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [pendingModelAction]);
+
+  useEffect(() => {
     const controller = new AbortController();
     const loadAuthorData = async () => {
       if (!authorData) setAuthorDataState("loading");
@@ -826,11 +1041,15 @@ function SettingsWindow() {
       hopInterval: null,
     });
     previewMascotRef.current = mascot;
+    setRuntimeCapabilities(mascot.getCapabilities());
     mascot.setEmotion(previewEmotion);
-    return () => { mascot.destroy(); previewMascotRef.current = null; };
-  }, [activeTab, livelyMascot, modelRegistryVersion, settings.character, settings.viewMode, settings.outlineVisible, settings.bodyColor, settings.outlineColor, settings.accentColor]);
+    return () => { mascot.destroy(); previewMascotRef.current = null; setRuntimeCapabilities(null); };
+  }, [activeTab, livelyMascot, modelRegistryVersion, settings.character, settings.viewMode, settings.faceVariant, settings.accessories, settings.outlineVisible, settings.bodyColor, settings.outlineColor, settings.accentColor]);
 
-  useEffect(() => { previewMascotRef.current?.setEmotion(previewEmotion); }, [previewEmotion]);
+  useEffect(() => {
+    previewMascotRef.current?.setEmotion(previewEmotion);
+    setEmotionApplied(previewEmotion === settings.emotion);
+  }, [previewEmotion, settings.emotion]);
 
   useEffect(() => {
     if (!recordingShortcut) return;
@@ -887,7 +1106,7 @@ function SettingsWindow() {
   const update = <K extends keyof MascotSettings>(key: K, value: MascotSettings[K]) => {
     const next = { ...settings, [key]: value };
     setSettings(next);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    persistSettings(next);
     void emitTo("main", "mascot-settings-update", next);
   };
   const startShortcutRecording = (shortcutKey: ShortcutSettingKey) => {
@@ -913,26 +1132,67 @@ function SettingsWindow() {
       accentColor: modelTheme.accent ?? settings.accentColor,
     } : {}) };
     setSettings(next);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    persistSettings(next);
     void emitTo("main", "mascot-settings-update", next);
+  };
+  const installModelFiles = async (files: File[]) => {
+    try {
+      const payload = await modelFilesFromSelection(files);
+      await invoke("install_custom_model", { upload: payload });
+      await refreshCustomModels();
+      setModelImportState("ready");
+      setModelImportMessage(text.modelImported);
+      setModelActionFeedback(null);
+      void emitTo("main", "custom-models-updated");
+    } catch (error) {
+      setModelImportState("error");
+      setModelImportMessage(modelImportErrorText(error, text));
+    }
   };
   const importModel = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
-    const byName = new Map(files.map((file) => [file.name.toLowerCase(), file]));
-    const modelJs = byName.get("model.js");
-    const modelCss = byName.get("model.css");
-    const modelJson = byName.get("model.json");
-    if (!modelJs || !modelCss || !modelJson) { setModelImportState("error"); return; }
+    await installModelFiles(files);
+  };
+  const handleModelDrop = async (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setModelDragActive(false);
+    await installModelFiles(Array.from(event.dataTransfer.files));
+  };
+  const removeModel = async (id: string) => {
     try {
-      const manifest = JSON.parse(await modelJson.text()) as { id?: unknown };
-      if (typeof manifest.id !== "string" || !/^[a-z0-9_-]+$/i.test(manifest.id)) throw new Error("invalid model id");
-      await invoke("install_custom_model", { upload: { id: manifest.id, model_js: await modelJs.text(), model_css: await modelCss.text(), model_json: JSON.stringify(manifest) } });
+      await invoke("delete_custom_model", { id });
+      if (settings.character === id) selectCharacter("ghost");
       await refreshCustomModels();
       setModelImportState("ready");
+      setModelImportMessage(text.modelDeleted);
+      setModelActionFeedback(null);
       void emitTo("main", "custom-models-updated");
-    } catch {
+    } catch (error) {
       setModelImportState("error");
+      setModelImportMessage(modelImportErrorText(error, text));
+    }
+  };
+  const requestModelAction = (id: string, action: ModelAction) => {
+    setModelActionFeedback(null);
+    setPendingModelAction({ id, action });
+  };
+  const confirmModelAction = async () => {
+    if (!pendingModelAction) return;
+    const { id, action } = pendingModelAction;
+    setPendingModelAction(null);
+    if (action === "delete") await removeModel(id);
+    else await exportModel(id);
+  };
+  const exportModel = async (id: string) => {
+    try {
+      await downloadModelPackage(id);
+      setModelImportState("ready");
+      setModelImportMessage(text.modelExported);
+      setModelActionFeedback(id);
+    } catch (error) {
+      setModelImportState("error");
+      setModelImportMessage(modelImportErrorText(error, text));
     }
   };
   const updateDashboardPreference = <K extends keyof DashboardPreferences>(key: K, value: DashboardPreferences[K]) => {
@@ -944,7 +1204,7 @@ function SettingsWindow() {
   const resetSettings = () => {
     setSettings(DEFAULT_SETTINGS);
     setPreviewEmotion(DEFAULT_SETTINGS.emotion);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SETTINGS));
+    persistSettings(DEFAULT_SETTINGS);
     void emitTo("main", "mascot-settings-update", DEFAULT_SETTINGS);
     void setGlobalShortcuts(DEFAULT_SETTINGS).catch(() => undefined);
   };
@@ -960,6 +1220,12 @@ function SettingsWindow() {
     setActiveTab(dashboardTabs[nextIndex].id);
     tabButtonRefs.current[nextIndex]?.focus();
   };
+  const activeModel = livelyMascot?.models?.[settings.character];
+  const capabilityModel = runtimeCapabilities && runtimeCapabilities.presentation?.labels ? runtimeCapabilities : activeModel;
+  const activeAccessories = Object.entries(capabilityModel?.accessories ?? {});
+  const modelMotion = capabilityModel?.rig
+    ? Object.entries(capabilityModel.rig).filter(([, enabled]) => enabled).map(([name]) => name).join(", ")
+    : "";
 
   return <main className={`settings-shell dashboard-shell theme-${dashboardPreferences.theme}`}>
     <aside className="dashboard-sidebar">
@@ -983,8 +1249,8 @@ function SettingsWindow() {
         ><span>{String(index + 1).padStart(2, "0")}</span><strong>{tab.label}</strong></button>)}
       </nav>
       <div className="dashboard-sidebar-footer">
-        <div className="preference-control"><span>{text.language}</span><div className="segmented"><button type="button" className={dashboardPreferences.locale === "zh-CN" ? "selected" : ""} onClick={() => updateDashboardPreference("locale", "zh-CN")}>中文</button><button type="button" className={dashboardPreferences.locale === "en" ? "selected" : ""} onClick={() => updateDashboardPreference("locale", "en")}>EN</button></div></div>
-        <div className="preference-control"><span>{text.theme}</span><div className="segmented"><button type="button" className={dashboardPreferences.theme === "light" ? "selected" : ""} onClick={() => updateDashboardPreference("theme", "light")}>{text.light}</button><button type="button" className={dashboardPreferences.theme === "dark" ? "selected" : ""} onClick={() => updateDashboardPreference("theme", "dark")}>{text.dark}</button></div></div>
+        <div className="preference-control"><span>{text.language}</span><div className="segmented" role="group" aria-label={text.language}><button type="button" aria-pressed={dashboardPreferences.locale === "zh-CN"} className={dashboardPreferences.locale === "zh-CN" ? "selected" : ""} onClick={() => updateDashboardPreference("locale", "zh-CN")}>中文</button><button type="button" aria-pressed={dashboardPreferences.locale === "en"} className={dashboardPreferences.locale === "en" ? "selected" : ""} onClick={() => updateDashboardPreference("locale", "en")}>EN</button></div></div>
+        <div className="preference-control"><span>{text.theme}</span><div className="segmented" role="group" aria-label={text.theme}><button type="button" aria-pressed={dashboardPreferences.theme === "light"} className={dashboardPreferences.theme === "light" ? "selected" : ""} onClick={() => updateDashboardPreference("theme", "light")}>{text.light}</button><button type="button" aria-pressed={dashboardPreferences.theme === "dark"} className={dashboardPreferences.theme === "dark" ? "selected" : ""} onClick={() => updateDashboardPreference("theme", "dark")}>{text.dark}</button></div></div>
         <span className="dashboard-version">v0.1.0 · lively 0.3.0</span>
       </div>
     </aside>
@@ -993,7 +1259,7 @@ function SettingsWindow() {
         <div><span>{activeTabDefinition.eyebrow}</span><h1>{activeTabDefinition.label}</h1></div>
         {activeTab !== "about" && <button className="reset-button" type="button" onClick={resetSettings}>{text.reset}</button>}
       </header>
-      <div className="dashboard-scroll">
+      <div className={`dashboard-scroll dashboard-scroll-${activeTab}`}>
         <div key={activeTab} id="dashboard-panel" className={`dashboard-panel dashboard-panel-${activeTab}`} role="tabpanel" aria-labelledby={`dashboard-tab-${activeTab}`}>
           {activeTab === "appearance" && <div className="appearance-layout">
             <aside className="preview-pane">
@@ -1002,16 +1268,20 @@ function SettingsWindow() {
             <div className="settings-groups">
               <section className="settings-group character-picker">
                 <div className="group-heading"><span className="control-label">MODEL</span><h2>{text.characterModel}</h2></div>
-                <div className="character-grid">{characters.map((character) => <button key={character.id} type="button" className={settings.character === character.id ? "selected" : ""} onClick={() => selectCharacter(character.id)}><CharacterPreview character={character.id} settings={settings} /><small>{character.name[dashboardPreferences.locale]}</small></button>)}{customModels.map((model) => { const labels = livelyMascot?.models?.[model.id]?.presentation?.labels; const name = dashboardPreferences.locale === "zh-CN" ? labels?.zh || model.name : labels?.en || model.name; return <button key={model.id} type="button" className={settings.character === model.id ? "selected" : ""} onClick={() => selectCharacter(model.id)}><CharacterPreview character={model.id} settings={settings} /><small>{name}</small></button>; })}</div>
-                <label className="model-import-button"><input type="file" accept=".js,.css,.json" multiple onChange={importModel} />{text.importModel}</label>
-                {modelImportState !== "idle" && <small className={`model-import-status ${modelImportState}`}>{modelImportState === "ready" ? text.modelImported : text.modelImportError}</small>}
+                <div className="character-grid">{characters.map((character) => <button key={character.id} type="button" className={settings.character === character.id ? "selected" : ""} onClick={() => selectCharacter(character.id)}><CharacterPreview character={character.id} settings={settings} /><small>{character.name[dashboardPreferences.locale]}</small><em>{text.officialModel}</em></button>)}{customModels.map((model) => { const labels = livelyMascot?.models?.[model.id]?.presentation?.labels; const name = dashboardPreferences.locale === "zh-CN" ? labels?.zh || model.name : labels?.en || model.name; return <div key={model.id} className={`custom-model-card${settings.character === model.id ? " selected" : ""}`}><button type="button" className="custom-model-select" onClick={() => selectCharacter(model.id)}><span className="custom-model-preview"><CharacterPreview character={model.id} settings={settings} /></span><small>{name}</small><em>{text.userModel}{model.version ? ` · ${model.version}` : ""}{model.author ? ` · ${model.author}` : ""}</em></button><div className="custom-model-actions"><button type="button" onClick={(event) => { event.stopPropagation(); requestModelAction(model.id, "export"); }} aria-label={`${text.exportModel} ${name}`} title={text.exportModel}>↓</button><button type="button" onClick={(event) => { event.stopPropagation(); requestModelAction(model.id, "delete"); }} aria-label={`${text.deleteModel} ${name}`} title={text.deleteModel}>×</button></div>{modelActionFeedback === model.id && <small className="model-action-feedback" role="status">{text.modelExported}</small>}</div>; })}</div>
+                <div className={`model-dropzone${modelDragActive ? " active" : ""}`} onDragEnter={(event) => { event.preventDefault(); setModelDragActive(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setModelDragActive(false); }} onDrop={(event) => void handleModelDrop(event)}><strong>{text.dropModel}</strong><span>{text.modelFormatHint}</span><label className="model-import-button"><input type="file" accept=".livelymodel,.js,.css,.json" multiple onChange={importModel} />{text.chooseModel}</label></div>
+                <small className="model-import-hint">{text.modelPackageContents}</small>
+                {modelImportState !== "idle" && <small className={`model-import-status ${modelImportState}`}>{modelImportMessage || (modelImportState === "ready" ? text.modelImported : text.modelImportError)}</small>}
               </section>
               <section className="settings-group">
                 <div className="group-heading"><span className="control-label">STYLE</span><h2>{text.behavior}</h2></div>
                 <div className="control-row"><label htmlFor="size">{text.size}</label><div className="range-wrap"><input id="size" type="range" min="80" max="160" step="10" value={settings.size} onChange={(event) => update("size", Number(event.target.value))} /><output>{settings.size}px</output></div></div>
-                <div className="control-row"><span>{text.viewMode}</span><div className="segmented">{(["2d", "3d"] as ViewMode[]).map((mode) => <button key={mode} type="button" className={settings.viewMode === mode ? "selected" : ""} onClick={() => update("viewMode", mode)}>{mode.toUpperCase()}</button>)}</div></div>
+                <div className="control-row"><span>{text.viewMode}</span><div className="segmented" role="group" aria-label={text.viewMode}>{(["2d", "3d"] as ViewMode[]).map((mode) => <button key={mode} type="button" aria-pressed={settings.viewMode === mode} className={settings.viewMode === mode ? "selected" : ""} onClick={() => update("viewMode", mode)}>{mode.toUpperCase()}</button>)}</div></div>
+                <div className="control-row"><span>{text.faceVariant}</span><div className="segmented" role="group" aria-label={text.faceVariant}>{([["default", text.faceDefault], ["simple", text.faceSimple], ["dot", text.faceDot]] as const).map(([variant, label]) => <button key={variant} type="button" aria-pressed={settings.faceVariant === variant} className={settings.faceVariant === variant ? "selected" : ""} onClick={() => update("faceVariant", variant)}>{label}</button>)}</div></div>
                 <label className="toggle-row"><span><strong>{text.outline}</strong><small>{text.outlineHint}</small></span><input type="checkbox" checked={settings.outlineVisible} onChange={(event) => update("outlineVisible", event.target.checked)} /><i /></label>
                 <div className="color-row"><label>{text.bodyColor}<input type="color" value={settings.bodyColor} onChange={(event) => update("bodyColor", event.target.value)} /></label><label>{text.outlineColor}<input type="color" value={settings.outlineColor} onChange={(event) => update("outlineColor", event.target.value)} /></label><label>{text.accentColor}<input type="color" value={settings.accentColor} onChange={(event) => update("accentColor", event.target.value)} /></label></div>
+                <div className="model-capabilities"><span className="capability-label">{text.modelCapabilities}</span><div><span>{text.modelParts}: {Object.keys(capabilityModel?.parts ?? {}).join(", ") || "-"}</span><span>{text.modelGaze}: {capabilityModel?.gaze?.scope ?? "-"}</span><span>{text.modelMotion}: {modelMotion || "-"}</span></div></div>
+                <div className="model-accessories"><span className="capability-label">{text.modelAccessories}</span>{activeAccessories.length === 0 ? <small>{text.noAccessories}</small> : activeAccessories.map(([id, definition]) => { const key = `${settings.character}:${id}`; return <label className="toggle-row" key={id}><span><strong>{id}</strong><small>{definition.actions.join(", ") || text.modelAccessories}</small></span><input type="checkbox" checked={settings.accessories[key] ?? definition.default} onChange={(event) => update("accessories", { ...settings.accessories, [key]: event.target.checked })} /><i /></label>; })}</div>
               </section>
             </div>
           </div>}
@@ -1027,7 +1297,7 @@ function SettingsWindow() {
             </section>
           </div>}
           {activeTab === "emotions" && <div className="emotion-layout">
-            <aside className="preview-pane emotion-preview"><div className="preview-stage"><div ref={previewRef} className="preview-host" /></div><button className="apply-emotion-button" type="button" onClick={() => update("emotion", previewEmotion)}>{text.setEmotion}</button></aside>
+            <aside className="preview-pane emotion-preview"><div className="preview-stage"><div ref={previewRef} className="preview-host" /></div><button className="apply-emotion-button" type="button" onClick={() => { update("emotion", previewEmotion); setEmotionApplied(true); }}>{text.setEmotion}<span aria-hidden="true">↗</span></button>{emotionApplied && <small className="emotion-applied" role="status">{text.emotionApplied}</small>}</aside>
             <section className="emotion-section"><div className="emotion-summary"><span>{Object.keys(livelyMascot?.emotions ?? {}).length} {text.emotionCount}</span></div><div className="emotion-scroll">{groupedEmotions.map((group) => <div className="emotion-group" key={group.id}><h3>{dashboardPreferences.locale === "zh-CN" ? group.name : englishEmotionGroups[group.id] ?? group.id}</h3><div className="emotion-grid">{group.emotions.map((emotion) => <button key={emotion.id} type="button" className={previewEmotion === emotion.id ? "selected" : ""} onClick={() => setPreviewEmotion(emotion.id)}><CharacterPreview character={settings.character} settings={settings} emotion={emotion.id} size={48} className="emotion-thumb" /><span>{dashboardPreferences.locale === "zh-CN" ? emotion.desc : emotion.name}</span><small>{emotion.id}</small></button>)}</div></div>)}</div></section>
           </div>}
           {activeTab === "about" && <div className="about-layout">
@@ -1067,16 +1337,27 @@ function SettingsWindow() {
           </div>}
         </div>
       </div>
+      {pendingModelAction && (() => {
+        const model = customModels.find((item) => item.id === pendingModelAction.id);
+        const labels = model ? livelyMascot?.models?.[model.id]?.presentation?.labels : undefined;
+        const modelName = model ? dashboardPreferences.locale === "zh-CN" ? labels?.zh || model.name : labels?.en || model.name : pendingModelAction.id;
+        const message = pendingModelAction.action === "delete" ? text.deleteModelConfirm : text.exportModelConfirm;
+        return <div className="model-confirm-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingModelAction(null); }}><section className="model-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="model-confirm-title"><span className="control-label">{pendingModelAction.action === "delete" ? text.deleteModel : text.exportModel}</span><h2 id="model-confirm-title">{text.confirmModelAction}</h2><p>{message}</p><strong>{modelName}</strong><div className="model-confirm-actions"><button type="button" className="model-confirm-cancel" onClick={() => setPendingModelAction(null)}>{text.cancel}</button><button type="button" className={pendingModelAction.action === "delete" ? "model-confirm-danger" : "model-confirm-primary"} onClick={() => void confirmModelAction()}>{text.confirm}</button></div></section></div>;
+      })()}
     </section>
   </main>;
 }
 
 function PetRoot() {
   const [modelRegistryVersion, setModelRegistryVersion] = useState(0);
-  useEffect(() => {
-    void loadCustomModels().then(() => setModelRegistryVersion((version) => version + 1)).catch(() => undefined);
+  const reloadCustomModels = useCallback(async () => {
+    await loadCustomModels();
+    setModelRegistryVersion((version) => version + 1);
   }, []);
-  return <PetWindow modelRegistryVersion={modelRegistryVersion} />;
+  useEffect(() => {
+    void reloadCustomModels().catch(() => undefined);
+  }, [reloadCustomModels]);
+  return <PetWindow modelRegistryVersion={modelRegistryVersion} onModelRegistryReload={reloadCustomModels} />;
 }
 
 function App() {

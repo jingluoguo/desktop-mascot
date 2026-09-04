@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
@@ -25,6 +26,7 @@ struct CustomModelSummary {
     id: String,
     name: String,
     version: String,
+    author: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -32,6 +34,7 @@ struct CustomModelSources {
     id: String,
     model_js: String,
     model_css: String,
+    model_json: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,6 +63,42 @@ fn valid_model_id(id: &str) -> bool {
         && id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+fn is_builtin_model_id(id: &str) -> bool {
+    matches!(id, "sprout" | "cat" | "robot" | "ghost" | "jelly")
+}
+
+fn validate_model_source(label: &str, source: &str) -> Result<(), String> {
+    const FORBIDDEN: &[&str] = &[
+        "fetch(",
+        "xmlhttprequest",
+        "websocket",
+        "eventsource",
+        "import(",
+        "eval(",
+        "new function(",
+        "__tauri__",
+        "__tauri_internal__",
+        "invoke(",
+        "window.open",
+        "document.cookie",
+        "navigator.",
+        "localstorage",
+        "sessionstorage",
+    ];
+    let normalized = source.to_ascii_lowercase();
+    if normalized.contains("http://")
+        || normalized.contains("https://")
+        || normalized.contains("javascript:")
+        || normalized.contains("data:text/html")
+    {
+        return Err(format!("{label} may not contain remote or executable URLs"));
+    }
+    if let Some(token) = FORBIDDEN.iter().find(|token| normalized.contains(**token)) {
+        return Err(format!("{label} contains forbidden capability: {token}"));
+    }
+    Ok(())
 }
 
 fn model_summary_from_manifest(path: &Path) -> Result<CustomModelSummary, String> {
@@ -98,10 +137,30 @@ fn model_summary_from_manifest(path: &Path) -> Result<CustomModelSummary, String
         .unwrap_or_default()
         .trim()
         .to_string();
-    if !valid_model_id(&id) || name.is_empty() || name.len() > 160 || version.len() > 40 {
+    let author = manifest
+        .get("author")
+        .and_then(|value| {
+            value
+                .as_str()
+                .or_else(|| value.get("name").and_then(serde_json::Value::as_str))
+        })
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if !valid_model_id(&id)
+        || name.is_empty()
+        || name.len() > 160
+        || version.len() > 40
+        || author.len() > 160
+    {
         return Err("model.json must contain a valid id and name".to_string());
     }
-    Ok(CustomModelSummary { id, name, version })
+    Ok(CustomModelSummary {
+        id,
+        name,
+        version,
+        author,
+    })
 }
 
 #[tauri::command]
@@ -112,6 +171,7 @@ fn list_custom_models<R: tauri::Runtime>(
     let mut models = fs::read_dir(directory)
         .map_err(|error| error.to_string())?
         .filter_map(Result::ok)
+        .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
         .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false))
         .filter_map(|entry| model_summary_from_manifest(&entry.path()).ok())
         .collect::<Vec<_>>();
@@ -135,7 +195,27 @@ fn read_custom_model<R: tauri::Runtime>(
             .map_err(|error| error.to_string())?,
         model_css: fs::read_to_string(directory.join("model.css"))
             .map_err(|error| error.to_string())?,
+        model_json: fs::read_to_string(directory.join("model.json"))
+            .map_err(|error| error.to_string())?,
     })
+}
+
+#[tauri::command]
+fn delete_custom_model<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    id: String,
+) -> Result<(), String> {
+    if !valid_model_id(&id) {
+        return Err("invalid model id".to_string());
+    }
+    if is_builtin_model_id(&id) {
+        return Err("built-in models cannot be deleted".to_string());
+    }
+    let directory = custom_models_dir(&app)?.join(id);
+    if !directory.exists() {
+        return Err("custom model does not exist".to_string());
+    }
+    fs::remove_dir_all(directory).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -148,6 +228,9 @@ fn install_custom_model<R: tauri::Runtime>(
         return Err(
             "model id must contain only letters, numbers, hyphens, or underscores".to_string(),
         );
+    }
+    if is_builtin_model_id(&upload.id) {
+        return Err("built-in model ids cannot be replaced".to_string());
     }
     if [
         upload.model_js.len(),
@@ -162,6 +245,8 @@ fn install_custom_model<R: tauri::Runtime>(
     if !upload.model_js.contains("defineModel") {
         return Err("model.js is not a lively-mascot 0.3 model".to_string());
     }
+    validate_model_source("model.js", &upload.model_js)?;
+    validate_model_source("model.css", &upload.model_css)?;
     let manifest = serde_json::from_str::<serde_json::Value>(&upload.model_json)
         .map_err(|error| format!("model.json is invalid: {error}"))?;
     let manifest_id = manifest
@@ -172,13 +257,51 @@ fn install_custom_model<R: tauri::Runtime>(
     if manifest_id != upload.id {
         return Err("the selected model id does not match model.json".to_string());
     }
-    let directory = custom_models_dir(&app)?.join(&upload.id);
-    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    fs::write(directory.join("model.js"), upload.model_js).map_err(|error| error.to_string())?;
-    fs::write(directory.join("model.css"), upload.model_css).map_err(|error| error.to_string())?;
-    fs::write(directory.join("model.json"), upload.model_json)
-        .map_err(|error| error.to_string())?;
-    model_summary_from_manifest(&directory)
+    let models_root = custom_models_dir(&app)?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let staging = models_root.join(format!(
+        ".{}.staging-{}-{}",
+        upload.id,
+        std::process::id(),
+        stamp
+    ));
+    fs::create_dir_all(&staging).map_err(|error| error.to_string())?;
+    let result = (|| {
+        fs::write(staging.join("model.js"), upload.model_js).map_err(|error| error.to_string())?;
+        fs::write(staging.join("model.css"), upload.model_css)
+            .map_err(|error| error.to_string())?;
+        fs::write(staging.join("model.json"), upload.model_json)
+            .map_err(|error| error.to_string())?;
+        let summary = model_summary_from_manifest(&staging)?;
+        let directory = models_root.join(&upload.id);
+        let backup = models_root.join(format!(
+            ".{}.backup-{}-{}",
+            upload.id,
+            std::process::id(),
+            stamp
+        ));
+        let had_existing = directory.exists();
+        if had_existing {
+            fs::rename(&directory, &backup).map_err(|error| error.to_string())?;
+        }
+        if let Err(error) = fs::rename(&staging, &directory) {
+            if had_existing {
+                let _ = fs::rename(&backup, &directory);
+            }
+            return Err(error.to_string());
+        }
+        if had_existing {
+            let _ = fs::remove_dir_all(&backup);
+        }
+        Ok(summary)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&staging);
+    }
+    result
 }
 
 fn set_main_window_visibility(app: &tauri::AppHandle, visible: bool) -> Result<(), String> {
@@ -420,8 +543,41 @@ pub fn run() {
             resize_main_window,
             list_custom_models,
             read_custom_model,
+            delete_custom_model,
             install_custom_model
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_builtin_model_id, valid_model_id, validate_model_source};
+
+    #[test]
+    fn accepts_skill_style_model_source() {
+        assert!(valid_model_id("fox-model_01"));
+        assert!(validate_model_source(
+            "model.js",
+            "LivelyMascot.defineModel({ render: function (model, container) {} });"
+        )
+        .is_ok());
+        assert!(
+            validate_model_source("model.css", ".lively-mascot--fox-model { color: red; }").is_ok()
+        );
+        assert!(is_builtin_model_id("ghost"));
+        assert!(!is_builtin_model_id("fox-model_01"));
+    }
+
+    #[test]
+    fn rejects_external_and_host_capabilities() {
+        assert!(validate_model_source("model.js", "fetch('https://example.com')").is_err());
+        assert!(
+            validate_model_source("model.js", "window.__TAURI_INTERNAL__.invoke('x')").is_err()
+        );
+        assert!(
+            validate_model_source("model.css", "@import url('https://example.com/model.css')")
+                .is_err()
+        );
+    }
 }
