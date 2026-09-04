@@ -720,10 +720,10 @@ json5@^2.2.3:
   resolved "https://registry.npmmirror.com/json5/-/json5-2.2.3.tgz#78cd6f1a19bdc12b73db5ad0c61efd66c1e29283"
   integrity sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg==
 
-lively-mascot@0.3.0:
-  version "0.3.0"
-  resolved "https://registry.npmmirror.com/lively-mascot/-/lively-mascot-0.3.0.tgz#77cbfa6c75f308fb0001d3c6411d4d7a26051cc8"
-  integrity sha512-985SgzzeriumZSd4e8YGJ9Aqgv8pzEl3i2Rl70ruDEBvCeN4QOYYA7379ijKzk/mf5vM/5BjFsyGVD0nAhQnaQ==
+lively-mascot@0.3.1:
+  version "0.3.1"
+  resolved "https://registry.npmmirror.com/lively-mascot/-/lively-mascot-0.3.1.tgz#11743db3dc75d49f6298296304c37dc373102801"
+  integrity sha512-7RSkfME4dFVg41jR2uxhmUnLyU8lhYQJ/EtVBUcGWF1xCFJ9avDCzwGDGLe89zCqH/b1uZkrkZLAkb21HbeJDw==
 
 lru-cache@^5.1.1:
   version "5.1.1"

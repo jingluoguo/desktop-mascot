@@ -12,7 +12,7 @@
 - 系统托盘菜单：打开仪表盘、隐藏 / 显示宠物、退出应用
 - 仪表盘支持中文 / English 和浅色 / 深色主题
 - 设置保存在本地，并在宠物窗口与仪表盘之间即时同步
-- 支持导入 `lively-mascot` 0.3.0 图片模型 Skill 生成的 `model.js`、`model.css` 和 `model.json`
+- 支持导入 `lively-mascot` 0.3.1 图片模型 Skill 生成的 `model.js`、`model.css` 和 `model.json`
 - 用户模型保存在系统应用数据目录，不写入安装包或前端构建目录，升级应用后仍会保留
 
 ## 环境要求

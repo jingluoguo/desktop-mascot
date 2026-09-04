@@ -801,3 +801,186 @@ button.work-card:focus-visible { outline: 2px solid var(--accent); outline-offse
   border-color: var(--accent);
   background: var(--accent-soft);
 }
+
+/* Dashboard refresh: use space and surface contrast instead of hard dividers. */
+.settings-shell.dashboard-shell {
+  --surface: #111817;
+  --sidebar: #19211f;
+  --raised: #1b2523;
+  --line: transparent;
+  background: #111817;
+}
+.dashboard-sidebar {
+  border-right: 0;
+  background: #19211f;
+  box-shadow: 14px 0 34px rgba(0, 0, 0, .13);
+}
+.dashboard-workspace-header {
+  min-height: 116px;
+  border-bottom: 0;
+  background: #111817;
+  box-shadow: none;
+}
+.dashboard-sidebar-footer {
+  gap: 12px 10px;
+  padding-top: 16px;
+  border-top: 0;
+}
+.dashboard-tabs { gap: 7px; }
+.dashboard-tabs button {
+  border-radius: 9px;
+  transition: color 160ms ease, background 160ms ease;
+}
+.dashboard-tabs button:hover { background: rgba(255, 255, 255, .055); }
+.dashboard-tabs button.selected {
+  color: #f1faf7;
+  background: rgba(131, 223, 201, .18);
+  box-shadow: 0 7px 18px rgba(0, 0, 0, .11);
+}
+.dashboard-tabs button.selected::before { display: none; }
+.dashboard-tabs button.selected > span { color: #b5f4e4; }
+.dashboard-panel { padding-top: 44px; }
+.settings-groups { gap: 42px; }
+.settings-group,
+.settings-group + .settings-group,
+.behavior-layout .settings-group,
+.behavior-layout .settings-group + .settings-group {
+  padding: 0;
+  border: 0;
+}
+.group-heading { gap: 7px; margin-bottom: 16px; }
+.group-heading h2 { font-weight: 600; }
+.dashboard-panel .preview-stage {
+  border: 0;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #20302d, #16201f 78%);
+  box-shadow: inset 0 1px rgba(255, 255, 255, .045), 0 20px 42px rgba(0, 0, 0, .16);
+}
+.dashboard-panel .character-grid button,
+.dashboard-panel .emotion-grid button,
+.custom-model-card {
+  border-color: transparent;
+  background: #1b2523;
+  box-shadow: inset 0 0 0 1px rgba(206, 238, 229, .055);
+}
+.dashboard-panel .character-grid button:hover,
+.dashboard-panel .emotion-grid button:hover,
+.custom-model-card:hover {
+  border-color: transparent;
+  background: #21302d;
+  box-shadow: inset 0 0 0 1px rgba(206, 238, 229, .14);
+}
+.dashboard-panel .character-grid button.selected,
+.dashboard-panel .emotion-grid button.selected,
+.custom-model-card.selected {
+  border-color: transparent;
+  background: rgba(131, 223, 201, .16);
+  box-shadow: inset 0 0 0 1px rgba(161, 240, 219, .34);
+}
+.model-dropzone {
+  border: 0;
+  border-radius: 10px;
+  background: rgba(131, 223, 201, .075);
+  box-shadow: inset 0 0 0 1px rgba(131, 223, 201, .13);
+}
+.model-dropzone:hover,
+.model-dropzone.active {
+  border-color: transparent;
+  background: rgba(131, 223, 201, .13);
+  box-shadow: inset 0 0 0 1px rgba(161, 240, 219, .34);
+}
+.dashboard-panel .control-row,
+.dashboard-panel .toggle-row,
+.dashboard-panel .shortcut-row {
+  border-bottom: 0;
+  border-color: transparent;
+}
+.dashboard-panel .control-row,
+.dashboard-panel .toggle-row { padding-inline: 2px; }
+.model-capabilities { border-top: 0; padding-top: 4px; }
+.dashboard-panel .emotion-group h3::after { display: none; }
+.dashboard-panel .segmented,
+.dashboard-sidebar-footer .segmented {
+  border-color: transparent;
+  background: rgba(6, 12, 11, .26);
+  box-shadow: inset 0 0 0 1px rgba(206, 238, 229, .06);
+}
+.dashboard-workspace-header .reset-button {
+  border-color: transparent;
+  background: rgba(206, 238, 229, .07);
+  box-shadow: inset 0 0 0 1px rgba(206, 238, 229, .09);
+}
+.dashboard-workspace-header .reset-button:hover {
+  border-color: transparent;
+  background: rgba(233, 163, 127, .18);
+  box-shadow: inset 0 0 0 1px rgba(233, 163, 127, .3);
+}
+.theme-light.settings-shell.dashboard-shell {
+  --surface: #f1f5f2;
+  --sidebar: #e7eeea;
+  --raised: #fff;
+  --line: transparent;
+  background: #f1f5f2;
+}
+.theme-light .dashboard-sidebar {
+  border-right: 0;
+  background: #e7eeea;
+  box-shadow: 14px 0 32px rgba(36, 58, 50, .07);
+}
+.theme-light .dashboard-workspace-header { border-bottom: 0; background: #f1f5f2; }
+.theme-light .dashboard-tabs button:hover { background: rgba(255, 255, 255, .64); }
+.theme-light .dashboard-tabs button.selected {
+  color: #174d4d;
+  background: rgba(24, 127, 129, .12);
+  box-shadow: 0 7px 18px rgba(45, 62, 57, .06);
+}
+.theme-light .dashboard-tabs button.selected > span { color: #187f81; }
+.theme-light .dashboard-panel .preview-stage {
+  border: 0;
+  background: linear-gradient(145deg, #e3eeea, #edf3f0 78%);
+  box-shadow: inset 0 1px rgba(255, 255, 255, .82), 0 18px 38px rgba(45, 62, 57, .08);
+}
+.theme-light .dashboard-panel .character-grid button,
+.theme-light .dashboard-panel .emotion-grid button,
+.theme-light .custom-model-card {
+  border-color: transparent;
+  background: rgba(255, 255, 255, .72);
+  box-shadow: inset 0 0 0 1px rgba(49, 82, 71, .075);
+}
+.theme-light .dashboard-panel .character-grid button:hover,
+.theme-light .dashboard-panel .emotion-grid button:hover,
+.theme-light .custom-model-card:hover {
+  border-color: transparent;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px rgba(49, 82, 71, .16);
+}
+.theme-light .dashboard-panel .character-grid button.selected,
+.theme-light .dashboard-panel .emotion-grid button.selected,
+.theme-light .custom-model-card.selected {
+  border-color: transparent;
+  background: rgba(24, 127, 129, .105);
+  box-shadow: inset 0 0 0 1px rgba(24, 127, 129, .32);
+}
+.theme-light .model-dropzone {
+  border: 0;
+  background: rgba(24, 127, 129, .055);
+  box-shadow: inset 0 0 0 1px rgba(24, 127, 129, .15);
+}
+.theme-light .model-dropzone:hover,
+.theme-light .model-dropzone.active {
+  border-color: transparent;
+  background: rgba(24, 127, 129, .09);
+  box-shadow: inset 0 0 0 1px rgba(24, 127, 129, .31);
+}
+.theme-light .dashboard-panel .segmented,
+.theme-light .dashboard-sidebar-footer .segmented {
+  border-color: transparent;
+  background: rgba(255, 255, 255, .62);
+  box-shadow: inset 0 0 0 1px rgba(49, 82, 71, .1);
+}
+.theme-light .dashboard-workspace-header .reset-button {
+  border-color: transparent;
+  background: rgba(255, 255, 255, .66);
+  box-shadow: inset 0 0 0 1px rgba(49, 82, 71, .1);
+}
+.theme-light .dashboard-panel .toggle-row:hover { color: #173b3c; }
