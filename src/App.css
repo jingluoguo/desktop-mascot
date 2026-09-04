@@ -381,6 +381,9 @@ button { font: inherit; }
 .model-dropzone { display: grid; gap: 6px; margin-top: 16px; padding: 16px; border: 1px dashed #3a5552; border-radius: 8px; color: var(--muted); background: rgba(8, 20, 22, .26); text-align: center; transition: border-color .18s ease, background .18s ease; }
 .model-dropzone strong { color: var(--ink); font-size: 12px; font-weight: 570; }
 .model-dropzone span { font-size: 10px; line-height: 1.5; }
+.model-skill-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.model-skill-link:hover { color: #b0f0df; }
+.theme-light .model-skill-link:hover { color: #146e70; }
 .model-dropzone.active { border-color: var(--accent); background: var(--accent-soft); }
 .model-dropzone .model-import-button { justify-self: center; margin-top: 3px; }
 .model-capabilities { display: grid; gap: 8px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
