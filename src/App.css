@@ -68,7 +68,7 @@ button { font: inherit; }
   pointer-events: auto;
 }
 .menu-trigger:hover { color: #fff; border-color: rgba(157, 232, 255, .55); background: rgba(38, 76, 89, .7); }
-.pet-host { position: absolute; top: 50%; left: 50%; width: 1px; height: 1px; overflow: visible; transform: translate(-50%, -50%); cursor: grab; pointer-events: none; }
+.pet-host { position: absolute; top: calc(50% - 24px); left: 50%; width: 1px; height: 1px; overflow: visible; transform: translate(-50%, -50%); cursor: grab; pointer-events: none; }
 .pet-host .lively-mascot { position: absolute; top: 50%; left: 50%; filter: none; pointer-events: auto; transform: translate(-50%, -50%); }
 .pet-caption { position: absolute; right: 0; bottom: 19px; left: 0; display: grid; gap: 4px; text-align: center; pointer-events: none; }
 .pet-caption strong { color: rgba(231, 248, 251, .9); font-size: 12px; font-weight: 600; }
