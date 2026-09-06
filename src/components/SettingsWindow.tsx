@@ -33,6 +33,8 @@ export function SettingsWindow() {
   const [modelActionFeedback, setModelActionFeedback] = useState<string | null>(null);
   const [pendingModelAction, setPendingModelAction] = useState<{ id: string; action: ModelAction } | null>(null);
   const [runtimeCapabilities, setRuntimeCapabilities] = useState<ModelCapabilities | null>(null);
+  const [autostartState, setAutostartState] = useState<"loading" | "enabled" | "disabled" | "error">("loading");
+  const [autostartBusy, setAutostartBusy] = useState(false);
   const visibilityShortcutButtonRef = useRef<HTMLButtonElement>(null);
   const dashboardShortcutButtonRef = useRef<HTMLButtonElement>(null);
   const shortcutsBeforeRecordingRef = useRef({
@@ -74,6 +76,32 @@ export function SettingsWindow() {
   useEffect(() => {
     void refreshCustomModels();
   }, []);
+
+  const refreshAutostart = async () => {
+    setAutostartState("loading");
+    try {
+      const enabled = await invoke<boolean>("check_autostart");
+      setAutostartState(enabled ? "enabled" : "disabled");
+    } catch {
+      setAutostartState("error");
+    }
+  };
+
+  useEffect(() => {
+    void refreshAutostart();
+  }, []);
+
+  const updateAutostart = async (enabled: boolean) => {
+    setAutostartBusy(true);
+    try {
+      const actual = await invoke<boolean>("set_autostart", { enabled });
+      setAutostartState(actual ? "enabled" : "disabled");
+    } catch {
+      setAutostartState("error");
+    } finally {
+      setAutostartBusy(false);
+    }
+  };
 
   useEffect(() => {
     let stopState: (() => void) | undefined;
@@ -387,6 +415,16 @@ export function SettingsWindow() {
               <div className="group-heading"><span className="control-label">SHORTCUTS</span><h2>{text.recordShortcut}</h2></div>
               <div className="shortcut-row"><div><strong>{text.globalShortcut}</strong><small>{text.globalShortcutHint}</small></div><div className="shortcut-control"><button ref={visibilityShortcutButtonRef} type="button" className={`shortcut-capture${recordingShortcut === "globalShortcut" ? " recording" : ""}${recordingShortcut === "globalShortcut" && shortcutError ? " conflict" : ""}`} onClick={() => startShortcutRecording("globalShortcut")} onBlur={cancelShortcutRecording} aria-label={text.recordShortcut}>{recordingShortcut === "globalShortcut" ? shortcutDraft ? shortcutDisplay(shortcutDraft) : text.recordingShortcut : shortcutDisplay(settings.globalShortcut)}</button>{recordingShortcut === "globalShortcut" && shortcutError && <small className="shortcut-error" role="alert">{shortcutError}</small>}</div></div>
               <div className="shortcut-row"><div><strong>{text.dashboardShortcut}</strong><small>{text.dashboardShortcutHint}</small></div><div className="shortcut-control"><button ref={dashboardShortcutButtonRef} type="button" className={`shortcut-capture${recordingShortcut === "dashboardShortcut" ? " recording" : ""}${recordingShortcut === "dashboardShortcut" && shortcutError ? " conflict" : ""}`} onClick={() => startShortcutRecording("dashboardShortcut")} onBlur={cancelShortcutRecording} aria-label={text.recordShortcut}>{recordingShortcut === "dashboardShortcut" ? shortcutDraft ? shortcutDisplay(shortcutDraft) : text.recordingShortcut : shortcutDisplay(settings.dashboardShortcut)}</button>{recordingShortcut === "dashboardShortcut" && shortcutError && <small className="shortcut-error" role="alert">{shortcutError}</small>}</div></div>
+            </section>
+            <section className="settings-group autostart-group">
+              <div className="group-heading"><span className="control-label">SYSTEM</span><h2>{text.autostart}</h2></div>
+              <div className="autostart-row">
+                <div><strong>{autostartState === "enabled" ? text.autostartEnabled : autostartState === "disabled" ? text.autostartDisabled : text.autostartUnavailable}</strong><small>{text.autostartHint}</small></div>
+                <div className="autostart-actions">
+                  <button type="button" className="shortcut-capture" disabled={autostartBusy || autostartState === "loading"} onClick={() => void updateAutostart(autostartState !== "enabled")}>{autostartState === "enabled" ? text.autostartDisable : text.autostartEnable}</button>
+                  <button type="button" className="autostart-refresh" disabled={autostartBusy || autostartState === "loading"} onClick={() => void refreshAutostart()}>{text.autostartRefresh}</button>
+                </div>
+              </div>
             </section>
           </div>}
           {activeTab === "emotions" && <div className="emotion-layout">

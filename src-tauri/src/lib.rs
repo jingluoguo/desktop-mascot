@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
+use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 struct TrayMenuState {
@@ -55,6 +56,41 @@ fn custom_models_dir<R: tauri::Runtime>(
         .join("models");
     fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     Ok(directory)
+}
+
+#[tauri::command]
+fn check_autostart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<bool, String> {
+    app.autolaunch()
+        .is_enabled()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn set_autostart<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    enabled: bool,
+) -> Result<bool, String> {
+    let manager = app.autolaunch();
+    if enabled {
+        manager.enable().map_err(|error| error.to_string())?;
+    } else {
+        manager.disable().map_err(|error| error.to_string())?;
+    }
+    manager.is_enabled().map_err(|error| error.to_string())
+}
+
+fn request_autostart_once<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let Ok(data_dir) = app.path().app_data_dir() else {
+        return;
+    };
+    let marker = data_dir.join("autostart-requested");
+    if marker.exists() {
+        return;
+    }
+    if app.autolaunch().enable().is_ok() {
+        let _ = fs::create_dir_all(&data_dir);
+        let _ = fs::write(marker, b"requested");
+    }
 }
 
 fn valid_model_id(id: &str) -> bool {
@@ -439,6 +475,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name("Desktop Mascot")
+                .build(),
+        )
+        .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
                     if event.state() != ShortcutState::Pressed {
@@ -472,6 +513,8 @@ pub fn run() {
         )
         .setup(|app| {
             app.manage(ShortcutBindingsState::default());
+            // Request login-item access once; later changes are controlled from the dashboard.
+            request_autostart_once(app.handle());
             // Accessory apps stay available from the menu bar without a Dock icon (macOS only).
             #[cfg(target_os = "macos")]
             let _ = app
@@ -539,6 +582,8 @@ pub fn run() {
             quit_app,
             hide_main_window,
             set_global_shortcuts,
+            check_autostart,
+            set_autostart,
             position_main_window,
             resize_main_window,
             list_custom_models,

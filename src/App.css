@@ -206,6 +206,16 @@ button { font: inherit; }
 .shortcut-capture.conflict { color: #ffd8cb; border-color: #d27d61; background: rgba(210, 125, 97, .12); }
 .shortcut-row .shortcut-error { max-width: 210px; color: #ef9f83; line-height: 1.35; text-align: right; }
 .theme-light .shortcut-row { border-color: var(--line); }.theme-light .shortcut-row strong { color: #385354; }.theme-light .shortcut-row small { color: #6e8583; }.theme-light .shortcut-capture { color: #187f81; border-color: #b9d0cc; background: #f4f8f6; }.theme-light .shortcut-capture:hover, .theme-light .shortcut-capture.recording { color: #fff; border-color: #187f81; background: #187f81; }.theme-light .shortcut-capture.conflict { color: #8f4936; border-color: #bf6d48; background: #fff4ef; }.theme-light .shortcut-row .shortcut-error { color: #a95039; }
+.autostart-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 64px; }
+.autostart-row > div:first-child { display: grid; gap: 4px; min-width: 0; }
+.autostart-row strong { color: #bfd2ce; font-size: 12px; font-weight: 500; }
+.autostart-row small { color: #75918d; font-size: 10px; }
+.autostart-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.autostart-actions .shortcut-capture { min-width: 0; white-space: nowrap; }
+.autostart-refresh { min-height: 34px; padding: 0 10px; color: #a8bbb5; border: 1px solid #405550; border-radius: 7px; background: transparent; font-size: 10px; cursor: pointer; }
+.autostart-refresh:hover { color: var(--ink); border-color: #6c8981; background: rgba(255,255,255,.05); }
+.shortcut-capture:disabled, .autostart-refresh:disabled { opacity: .55; cursor: wait; }
+.theme-light .autostart-row { border-color: var(--line); }.theme-light .autostart-row strong { color: #385354; }.theme-light .autostart-row small { color: #6e8583; }.theme-light .autostart-refresh { color: #4f6661; border-color: #c3d0cc; }.theme-light .autostart-refresh:hover { color: #173b3c; border-color: #8ca9a2; background: #f3f8f6; }
 .emotion-thumb {
   position: relative;
   display: block;

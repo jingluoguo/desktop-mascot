@@ -16,6 +16,7 @@
     "core:window:allow-set-position",
     "core:window:allow-start-dragging",
     "opener:default",
-    "global-shortcut:default"
+    "global-shortcut:default",
+    "autostart:default"
   ]
 }
