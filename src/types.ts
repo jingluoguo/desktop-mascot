@@ -43,6 +43,13 @@ type DashboardPreferences = {
   locale: DashboardLocale;
 };
 
+type AppUpdateStatus = {
+  state: "idle" | "checking" | "available" | "downloading" | "paused" | "ready" | "up-to-date" | "installing" | "error";
+  version: string | null;
+  progress: number | null;
+  message: string | null;
+};
+
 type AuthorLink = {
   label: string;
   url: string;
@@ -81,4 +88,4 @@ type AuthorData = {
   tags: AuthorTag[];
   works: AuthorWork[];
 };
-export type { MascotSettings, ShortcutSettingKey, LivelyMascotApi, CustomModelSummary, CustomModelSources, ModelAction, DashboardTheme, DashboardLocale, DashboardTab, DashboardPreferences, AuthorLink, AuthorTag, AuthorWork, AuthorData };
+export type { MascotSettings, ShortcutSettingKey, LivelyMascotApi, CustomModelSummary, CustomModelSources, ModelAction, DashboardTheme, DashboardLocale, DashboardTab, DashboardPreferences, AppUpdateStatus, AuthorLink, AuthorTag, AuthorWork, AuthorData };

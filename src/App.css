@@ -226,6 +226,16 @@ button { font: inherit; }
 .autostart-refresh:hover { color: var(--ink); border-color: #6c8981; background: rgba(255,255,255,.05); }
 .shortcut-capture:disabled, .autostart-refresh:disabled { opacity: .55; cursor: wait; }
 .theme-light .autostart-row { border-color: var(--line); }.theme-light .autostart-row strong { color: #385354; }.theme-light .autostart-row small { color: #6e8583; }.theme-light .autostart-refresh { color: #4f6661; border-color: #c3d0cc; }.theme-light .autostart-refresh:hover { color: #173b3c; border-color: #8ca9a2; background: #f3f8f6; }
+.update-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 74px; }
+.update-row > div:first-child { display: grid; flex: 1 1 auto; gap: 7px; min-width: 0; }
+.update-row strong { color: #bfd2ce; font-size: 12px; font-weight: 500; }
+.update-row small { color: #75918d; font-size: 10px; line-height: 1.4; }
+.dashboard-update-actions { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 8px; }
+.dashboard-update-actions .shortcut-capture { min-width: 0; white-space: nowrap; }
+.dashboard-update-progress { width: min(260px, 100%); height: 5px; overflow: hidden; border-radius: 3px; background: #30413d; }
+.dashboard-update-progress i { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .2s ease; }
+.theme-light .update-row strong { color: #385354; }.theme-light .update-row small { color: #6e8583; }.theme-light .dashboard-update-progress { background: #cfdbd7; }
+@media (max-width: 560px) { .update-row { align-items: flex-start; flex-direction: column; }.dashboard-update-actions { width: 100%; justify-content: flex-start; } }
 .emotion-thumb {
   position: relative;
   display: block;

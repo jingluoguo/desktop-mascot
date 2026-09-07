@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { relaunch } from "@tauri-apps/plugin-process";
 import type { EmotionDefinition, MascotInstance, ModelCapabilities, ViewMode } from "lively-mascot";
 import { AUTHOR_DATA_CACHE_KEY, AUTHOR_DATA_URL, characters, DEFAULT_SETTINGS, defaultThemes, englishEmotionGroups, UI_STORAGE_KEY, uiText, workTypeClass, workTypeName } from "../config";
-import type { AuthorData, AuthorTag, CustomModelSummary, DashboardPreferences, DashboardTab, MascotSettings, ModelAction, ShortcutSettingKey } from "../types";
+import type { AppUpdateStatus, AuthorData, AuthorTag, CustomModelSummary, DashboardPreferences, DashboardTab, MascotSettings, ModelAction, ShortcutSettingKey } from "../types";
 import { loadCachedAuthorData, openExternalUrl, parseAuthorData } from "../lib/author";
+import { checkForAppUpdate as resolveAppUpdate } from "../lib/appUpdates";
 import { downloadModelPackage, loadCustomModels, modelFilesFromSelection, modelImportErrorText } from "../lib/customModels";
 import { getLivelyMascot } from "../lib/mascotRuntime";
 import { loadDashboardPreferences, loadSettings, persistSettings, setGlobalShortcuts, shortcutDisplay, shortcutFromKeyboardEvent } from "../lib/settings";
@@ -35,6 +37,7 @@ export function SettingsWindow() {
   const [runtimeCapabilities, setRuntimeCapabilities] = useState<ModelCapabilities | null>(null);
   const [autostartState, setAutostartState] = useState<"loading" | "enabled" | "disabled" | "error">("loading");
   const [autostartBusy, setAutostartBusy] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus>({ state: "idle", version: null, progress: null, message: null });
   const visibilityShortcutButtonRef = useRef<HTMLButtonElement>(null);
   const dashboardShortcutButtonRef = useRef<HTMLButtonElement>(null);
   const shortcutsBeforeRecordingRef = useRef({
@@ -103,6 +106,35 @@ export function SettingsWindow() {
     }
   };
 
+  const checkForUpdate = async () => {
+    try {
+      setUpdateStatus((status) => ({ ...status, state: "checking", message: null }));
+      const status = await resolveAppUpdate();
+      setUpdateStatus(status);
+      if (status.state === "available") setUpdateStatus(await invoke<AppUpdateStatus>("start_update_download"));
+    } catch (error) {
+      setUpdateStatus((status) => ({ ...status, state: "error", message: error instanceof Error ? error.message : null }));
+    }
+  };
+
+  const handleUpdateAction = async () => {
+    try {
+      if (updateStatus.state === "ready") {
+        setUpdateStatus((status) => ({ ...status, state: "installing", message: null }));
+        await invoke("install_downloaded_update");
+        await relaunch();
+        return;
+      }
+      if (updateStatus.state === "downloading") {
+        setUpdateStatus(await invoke<AppUpdateStatus>("pause_update_download"));
+        return;
+      }
+      setUpdateStatus(await invoke<AppUpdateStatus>("start_update_download"));
+    } catch (error) {
+      setUpdateStatus((status) => ({ ...status, state: "error", message: error instanceof Error ? error.message : null }));
+    }
+  };
+
   useEffect(() => {
     let stopState: (() => void) | undefined;
     void listen<MascotSettings>("mascot-settings-state", ({ payload }) => {
@@ -111,6 +143,13 @@ export function SettingsWindow() {
     }).then((unlisten) => { stopState = unlisten; });
     void emitTo("main", "mascot-settings-request");
     return () => stopState?.();
+  }, []);
+
+  useEffect(() => {
+    let stopStatus: (() => void) | undefined;
+    void listen<AppUpdateStatus>("update-status", ({ payload }) => setUpdateStatus(payload)).then((unlisten) => { stopStatus = unlisten; });
+    void invoke<AppUpdateStatus>("get_update_status").then(setUpdateStatus).catch(() => undefined);
+    return () => stopStatus?.();
   }, []);
 
   useEffect(() => {
@@ -347,6 +386,20 @@ export function SettingsWindow() {
   const modelMotion = capabilityModel?.rig
     ? Object.entries(capabilityModel.rig).filter(([, enabled]) => enabled).map(([name]) => name).join(", ")
     : "";
+  const updateStatusLabel = updateStatus.state === "checking" ? text.checkingForUpdate
+    : updateStatus.state === "available" ? `${text.updateAvailable}${updateStatus.version ? ` · v${updateStatus.version}` : ""}`
+      : updateStatus.state === "downloading" ? `${text.updateDownloading}${updateStatus.version ? ` · v${updateStatus.version}` : ""}`
+        : updateStatus.state === "paused" ? `${text.updatePaused}${updateStatus.version ? ` · v${updateStatus.version}` : ""}`
+          : updateStatus.state === "ready" ? `${text.updateReady}${updateStatus.version ? ` · v${updateStatus.version}` : ""}`
+            : updateStatus.state === "installing" ? text.installingUpdate
+              : updateStatus.state === "up-to-date" ? text.upToDate
+                : updateStatus.state === "error" ? text.updateFailed
+                  : text.updateNotChecked;
+  const updateActionLabel = updateStatus.state === "downloading" ? text.pauseUpdate
+    : updateStatus.state === "ready" ? text.installUpdate
+      : updateStatus.state === "paused" ? text.resumeUpdate
+        : text.downloadUpdate;
+  const canActOnUpdate = ["available", "downloading", "paused", "ready"].includes(updateStatus.state);
 
   return <main className={`settings-shell dashboard-shell theme-${dashboardPreferences.theme}`}>
     <aside className="dashboard-sidebar">
@@ -423,6 +476,20 @@ export function SettingsWindow() {
                 <div className="autostart-actions">
                   <button type="button" className="shortcut-capture" disabled={autostartBusy || autostartState === "loading"} onClick={() => void updateAutostart(autostartState !== "enabled")}>{autostartState === "enabled" ? text.autostartDisable : text.autostartEnable}</button>
                   <button type="button" className="autostart-refresh" disabled={autostartBusy || autostartState === "loading"} onClick={() => void refreshAutostart()}>{text.autostartRefresh}</button>
+                </div>
+              </div>
+            </section>
+            <section className="settings-group update-group">
+              <div className="group-heading"><span className="control-label">UPDATE</span><h2>{text.appUpdate}</h2></div>
+              <div className="update-row">
+                <div>
+                  <strong>{updateStatusLabel}</strong>
+                  {updateStatus.state === "downloading" && <div className="dashboard-update-progress" aria-label={`${text.updateDownloading} ${Math.round(updateStatus.progress ?? 0)}%`}><i style={{ width: `${updateStatus.progress ?? 0}%` }} /></div>}
+                  <small>{updateStatus.message || (updateStatus.state === "ready" ? text.updateReadyHint : updateStatus.state === "paused" ? text.updatePausedHint : text.appUpdateHint)}</small>
+                </div>
+                <div className="dashboard-update-actions">
+                  <button type="button" className="autostart-refresh" disabled={updateStatus.state === "checking" || updateStatus.state === "installing"} onClick={() => void checkForUpdate()}>{text.checkForUpdate}</button>
+                  {canActOnUpdate && <button type="button" className="shortcut-capture" onClick={() => void handleUpdateAction()}>{updateActionLabel}</button>}
                 </div>
               </div>
             </section>
