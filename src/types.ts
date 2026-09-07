@@ -37,7 +37,20 @@ type ModelAction = "export" | "delete";
 
 type DashboardTheme = "light" | "dark";
 type DashboardLocale = "zh-CN" | "en";
-type DashboardTab = "appearance" | "behavior" | "emotions" | "about";
+type DashboardTab = "appearance" | "behavior" | "reminders" | "emotions" | "about";
+type ReminderSchedule = "once" | "daily" | "weekdays" | "interval";
+type Reminder = {
+  id: string;
+  title: string;
+  enabled: boolean;
+  schedule: ReminderSchedule;
+  runAt: string;
+  intervalMinutes: number | null;
+  emotion: string;
+  systemNotification: boolean;
+  nextRunAt: number | null;
+  lastFiredAt: number | null;
+};
 type DashboardPreferences = {
   theme: DashboardTheme;
   locale: DashboardLocale;
@@ -88,4 +101,4 @@ type AuthorData = {
   tags: AuthorTag[];
   works: AuthorWork[];
 };
-export type { MascotSettings, ShortcutSettingKey, LivelyMascotApi, CustomModelSummary, CustomModelSources, ModelAction, DashboardTheme, DashboardLocale, DashboardTab, DashboardPreferences, AppUpdateStatus, AuthorLink, AuthorTag, AuthorWork, AuthorData };
+export type { MascotSettings, ShortcutSettingKey, LivelyMascotApi, CustomModelSummary, CustomModelSources, ModelAction, DashboardTheme, DashboardLocale, DashboardTab, DashboardPreferences, AppUpdateStatus, AuthorLink, AuthorTag, AuthorWork, AuthorData, ReminderSchedule, Reminder };

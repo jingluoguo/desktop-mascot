@@ -1,6 +1,8 @@
+use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Timelike, Weekday};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
@@ -70,6 +72,244 @@ impl Default for UpdateSession {
 #[derive(Default)]
 struct UpdateManagerState {
     session: Mutex<UpdateSession>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Reminder {
+    id: String,
+    title: String,
+    enabled: bool,
+    schedule: String,
+    run_at: String,
+    interval_minutes: Option<u32>,
+    emotion: String,
+    system_notification: bool,
+    next_run_at: Option<i64>,
+    last_fired_at: Option<i64>,
+}
+
+#[derive(Default)]
+struct ReminderManagerState {
+    reminders: Mutex<Vec<Reminder>>,
+    timer: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    data_path: Mutex<Option<PathBuf>>,
+}
+
+fn now_epoch() -> i64 {
+    Local::now().timestamp()
+}
+
+fn parse_run_at(value: &str) -> Option<DateTime<Local>> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|date| date.with_timezone(&Local))
+}
+
+fn next_recurring_run(reminder: &Reminder, now: DateTime<Local>) -> Option<i64> {
+    let base = parse_run_at(&reminder.run_at)?;
+    match reminder.schedule.as_str() {
+        "daily" => {
+            let mut candidate = Local
+                .with_ymd_and_hms(
+                    now.year(),
+                    now.month(),
+                    now.day(),
+                    base.hour(),
+                    base.minute(),
+                    base.second(),
+                )
+                .single()?;
+            if candidate <= now {
+                candidate += Duration::days(1);
+            }
+            Some(candidate.timestamp())
+        }
+        "weekdays" => {
+            for offset in 0..8 {
+                let date = now.date_naive() + Duration::days(offset);
+                let weekday = date.weekday();
+                if matches!(weekday, Weekday::Sat | Weekday::Sun) {
+                    continue;
+                }
+                let candidate = Local
+                    .with_ymd_and_hms(
+                        date.year(),
+                        date.month(),
+                        date.day(),
+                        base.hour(),
+                        base.minute(),
+                        base.second(),
+                    )
+                    .single()?;
+                if candidate > now {
+                    return Some(candidate.timestamp());
+                }
+            }
+            None
+        }
+        "interval" => {
+            let minutes = i64::from(reminder.interval_minutes.unwrap_or(60).max(1));
+            let first = base.timestamp();
+            if first > now.timestamp() {
+                Some(first)
+            } else {
+                let elapsed = now.timestamp() - first;
+                Some(first + ((elapsed / (minutes * 60)) + 1) * minutes * 60)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn normalize_reminder(mut reminder: Reminder) -> Reminder {
+    if !reminder.enabled {
+        reminder.next_run_at = None;
+        return reminder;
+    }
+    let now = Local::now();
+    if reminder.schedule == "once" {
+        reminder.next_run_at = parse_run_at(&reminder.run_at)
+            .map(|date| date.timestamp())
+            .filter(|timestamp| *timestamp > now.timestamp());
+        if reminder.next_run_at.is_none() {
+            reminder.enabled = false;
+        }
+    } else {
+        reminder.next_run_at = next_recurring_run(&reminder, now);
+    }
+    reminder
+}
+
+fn reminders_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    Ok(directory.join("reminders.json"))
+}
+
+fn save_reminders(state: &ReminderManagerState) -> Result<(), String> {
+    let path = state
+        .data_path
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone()
+        .ok_or_else(|| "reminder storage is unavailable".to_string())?;
+    let reminders = state.reminders.lock().map_err(|error| error.to_string())?;
+    let contents = serde_json::to_string_pretty(&*reminders).map_err(|error| error.to_string())?;
+    fs::write(path, contents).map_err(|error| error.to_string())
+}
+
+fn start_reminder_scheduler<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let state = app.state::<ReminderManagerState>();
+    let has_enabled = state
+        .reminders
+        .lock()
+        .map(|items| {
+            items
+                .iter()
+                .any(|item| item.enabled && item.next_run_at.is_some())
+        })
+        .unwrap_or(false);
+    if !has_enabled {
+        return;
+    }
+    let mut timer = match state.timer.lock() {
+        Ok(timer) => timer,
+        Err(_) => return,
+    };
+    if timer.is_some() {
+        return;
+    }
+    let task_app = app.clone();
+    *timer = Some(tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            let state = task_app.state::<ReminderManagerState>();
+            let now = now_epoch();
+            let mut fired = Vec::new();
+            let mut should_continue = false;
+            if let Ok(mut reminders) = state.reminders.lock() {
+                for reminder in reminders.iter_mut() {
+                    if !reminder.enabled || reminder.next_run_at.is_none() {
+                        continue;
+                    }
+                    should_continue = true;
+                    if reminder.next_run_at.is_some_and(|next| next <= now) {
+                        reminder.last_fired_at = Some(now);
+                        fired.push(reminder.clone());
+                        if reminder.schedule == "once" {
+                            reminder.enabled = false;
+                            reminder.next_run_at = None;
+                        } else if reminder.schedule == "interval" {
+                            reminder.next_run_at = Some(
+                                now + i64::from(reminder.interval_minutes.unwrap_or(60).max(1))
+                                    * 60,
+                            );
+                        } else {
+                            reminder.next_run_at = next_recurring_run(reminder, Local::now());
+                        }
+                    }
+                }
+            }
+            if !fired.is_empty() {
+                let _ = save_reminders(&state);
+                for reminder in fired {
+                    let _ = task_app.emit("reminder-fired", reminder);
+                }
+            }
+            if !should_continue {
+                if let Ok(mut slot) = state.timer.lock() {
+                    *slot = None;
+                }
+                break;
+            }
+        }
+    }));
+}
+
+#[tauri::command]
+fn list_reminders<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<Vec<Reminder>, String> {
+    Ok(app
+        .state::<ReminderManagerState>()
+        .reminders
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone())
+}
+
+#[tauri::command]
+fn save_reminder<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    reminder: Reminder,
+) -> Result<Vec<Reminder>, String> {
+    let state = app.state::<ReminderManagerState>();
+    let normalized = normalize_reminder(reminder);
+    let mut reminders = state.reminders.lock().map_err(|error| error.to_string())?;
+    if let Some(existing) = reminders.iter_mut().find(|item| item.id == normalized.id) {
+        *existing = normalized;
+    } else {
+        reminders.push(normalized);
+    }
+    drop(reminders);
+    save_reminders(&state)?;
+    start_reminder_scheduler(&app);
+    list_reminders(app)
+}
+
+#[tauri::command]
+fn delete_reminder<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    id: String,
+) -> Result<Vec<Reminder>, String> {
+    let state = app.state::<ReminderManagerState>();
+    let mut reminders = state.reminders.lock().map_err(|error| error.to_string())?;
+    reminders.retain(|item| item.id != id);
+    drop(reminders);
+    save_reminders(&state)?;
+    list_reminders(app)
 }
 
 fn emit_update_status<R: tauri::Runtime>(app: &tauri::AppHandle<R>, status: &UpdateStatus) {
@@ -864,6 +1104,22 @@ pub fn run() {
         .setup(|app| {
             app.manage(ShortcutBindingsState::default());
             app.manage(UpdateManagerState::default());
+            let reminder_state = ReminderManagerState::default();
+            let reminder_path = reminders_file(app.handle()).ok();
+            if let Some(path) = reminder_path.clone() {
+                if let Ok(contents) = fs::read_to_string(&path) {
+                    if let Ok(items) = serde_json::from_str::<Vec<Reminder>>(&contents) {
+                        if let Ok(mut reminders) = reminder_state.reminders.lock() {
+                            *reminders = items.into_iter().map(normalize_reminder).collect();
+                        }
+                    }
+                }
+            }
+            if let Ok(mut path_slot) = reminder_state.data_path.lock() {
+                *path_slot = reminder_path;
+            }
+            app.manage(reminder_state);
+            start_reminder_scheduler(app.handle());
             // Request login-item access once; later changes are controlled from the dashboard.
             request_autostart_once(app.handle());
             // Accessory apps stay available from the menu bar without a Dock icon (macOS only).
@@ -950,7 +1206,10 @@ pub fn run() {
             list_custom_models,
             read_custom_model,
             delete_custom_model,
-            install_custom_model
+            install_custom_model,
+            list_reminders,
+            save_reminder,
+            delete_reminder
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -2,7 +2,7 @@ import { emitTo } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, STORAGE_KEY, UI_STORAGE_KEY } from "../config";
-import type { DashboardPreferences, MascotSettings } from "../types";
+import type { DashboardPreferences, MascotSettings, Reminder } from "../types";
 import { isRecord } from "./author";
 const persistSettings = (settings: MascotSettings) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
@@ -139,4 +139,7 @@ const openSettingsWindow = async (settings: MascotSettings) => {
     }, 250);
   });
 };
-export { persistSettings, loadSettings, shortcutDisplay, shortcutFromKeyboardEvent, setGlobalShortcuts, petWindowSize, loadDashboardPreferences, openSettingsWindow };
+const listReminders = () => invoke<Reminder[]>("list_reminders");
+const saveReminder = (reminder: Reminder) => invoke<Reminder[]>("save_reminder", { reminder });
+const deleteReminder = (id: string) => invoke<Reminder[]>("delete_reminder", { id });
+export { persistSettings, loadSettings, shortcutDisplay, shortcutFromKeyboardEvent, setGlobalShortcuts, petWindowSize, loadDashboardPreferences, openSettingsWindow, listReminders, saveReminder, deleteReminder };

@@ -6,7 +6,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import type { MascotInstance } from "lively-mascot";
 import { MAX_MASCOT_SIZE } from "../config";
-import type { MascotSettings } from "../types";
+import type { MascotSettings, Reminder } from "../types";
 import { loadSettings, openSettingsWindow, persistSettings, petWindowSize, setGlobalShortcuts } from "../lib/settings";
 import { getLivelyMascot } from "../lib/mascotRuntime";
 import { checkForAppUpdate } from "../lib/appUpdates";
@@ -14,6 +14,7 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   const hostRef = useRef<HTMLDivElement>(null);
   const mascotRef = useRef<MascotInstance | null>(null);
   const happyResetTimerRef = useRef<number | null>(null);
+  const reminderResetTimerRef = useRef<number | null>(null);
   const scaleFrameRef = useRef<number | null>(null);
   const scaleTargetRef = useRef(1);
   const scaleValueRef = useRef(1);
@@ -35,6 +36,7 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   const [settings, setSettings] = useState(loadSettings);
   const settingsRef = useRef(settings);
   const [activeEmotion, setActiveEmotion] = useState(settings.emotion);
+  const [activeReminderTitle, setActiveReminderTitle] = useState<string | null>(null);
   settingsRef.current = settings;
 
   useEffect(() => {
@@ -158,6 +160,16 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
           void openSettingsWindow(settingsRef.current);
         }),
         listen("custom-models-updated", () => { void onModelRegistryReload(); }),
+        listen<Reminder>("reminder-fired", ({ payload }) => {
+          if (reminderResetTimerRef.current !== null) window.clearTimeout(reminderResetTimerRef.current);
+          setActiveReminderTitle(payload.title);
+          setActiveEmotion(payload.emotion || settingsRef.current.emotion);
+          reminderResetTimerRef.current = window.setTimeout(() => {
+            setActiveEmotion(settingsRef.current.emotion);
+            setActiveReminderTitle(null);
+            reminderResetTimerRef.current = null;
+          }, 6000);
+        }),
       ]);
       if (disposed) {
         registered.forEach((unlisten) => unlisten());
@@ -291,6 +303,7 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
 
   useEffect(() => () => {
     if (happyResetTimerRef.current !== null) window.clearTimeout(happyResetTimerRef.current);
+    if (reminderResetTimerRef.current !== null) window.clearTimeout(reminderResetTimerRef.current);
     if (scaleFrameRef.current !== null) window.cancelAnimationFrame(scaleFrameRef.current);
     if (dragFrameRef.current !== null) window.cancelAnimationFrame(dragFrameRef.current);
     if (dragCursorPollRef.current !== null) window.clearInterval(dragCursorPollRef.current);
@@ -309,6 +322,7 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
 
   return <main className="pet-window" onContextMenu={openContextMenu}>
     <div ref={hostRef} className="pet-host" aria-label="可拖拽的桌面宠物" />
+    {activeReminderTitle && <div className="pet-reminder-toast" role="status"><span>提醒</span><strong>{activeReminderTitle}</strong></div>}
   </main>;
 }
 

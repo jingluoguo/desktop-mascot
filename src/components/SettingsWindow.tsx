@@ -4,13 +4,19 @@ import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import type { EmotionDefinition, MascotInstance, ModelCapabilities, ViewMode } from "lively-mascot";
 import { AUTHOR_DATA_CACHE_KEY, AUTHOR_DATA_URL, characters, DEFAULT_SETTINGS, defaultThemes, englishEmotionGroups, UI_STORAGE_KEY, uiText, workTypeClass, workTypeName } from "../config";
-import type { AppUpdateStatus, AuthorData, AuthorTag, CustomModelSummary, DashboardPreferences, DashboardTab, MascotSettings, ModelAction, ShortcutSettingKey } from "../types";
+import type { AppUpdateStatus, AuthorData, AuthorTag, CustomModelSummary, DashboardPreferences, DashboardTab, MascotSettings, ModelAction, Reminder, ReminderSchedule, ShortcutSettingKey } from "../types";
 import { loadCachedAuthorData, openExternalUrl, parseAuthorData } from "../lib/author";
 import { checkForAppUpdate as resolveAppUpdate } from "../lib/appUpdates";
 import { downloadModelPackage, loadCustomModels, modelFilesFromSelection, modelImportErrorText } from "../lib/customModels";
 import { getLivelyMascot } from "../lib/mascotRuntime";
-import { loadDashboardPreferences, loadSettings, persistSettings, setGlobalShortcuts, shortcutDisplay, shortcutFromKeyboardEvent } from "../lib/settings";
+import { deleteReminder, listReminders, loadDashboardPreferences, loadSettings, persistSettings, saveReminder, setGlobalShortcuts, shortcutDisplay, shortcutFromKeyboardEvent } from "../lib/settings";
 import { CharacterPreview } from "./CharacterPreview";
+
+const localDateTimeValue = (iso: string) => {
+  const date = new Date(iso);
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+};
 
 const LIVELY_MASCOT_SKILL_URL = "https://github.com/jingluoguo/lively-mascot/tree/master/skills/lively-mascot-image-model";
 export function SettingsWindow() {
@@ -38,6 +44,9 @@ export function SettingsWindow() {
   const [autostartState, setAutostartState] = useState<"loading" | "enabled" | "disabled" | "error">("loading");
   const [autostartBusy, setAutostartBusy] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus>({ state: "idle", version: null, progress: null, message: null });
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [editingReminder, setEditingReminder] = useState<Reminder | null>(null);
+  const [reminderFeedback, setReminderFeedback] = useState<string | null>(null);
   const visibilityShortcutButtonRef = useRef<HTMLButtonElement>(null);
   const dashboardShortcutButtonRef = useRef<HTMLButtonElement>(null);
   const shortcutsBeforeRecordingRef = useRef({
@@ -59,6 +68,7 @@ export function SettingsWindow() {
   const dashboardTabs: Array<{ id: DashboardTab; label: string; eyebrow: string }> = [
     { id: "appearance", label: text.appearanceTab, eyebrow: text.appearanceEyebrow },
     { id: "behavior", label: text.behaviorTab, eyebrow: text.behaviorEyebrow },
+    { id: "reminders", label: text.remindersTab, eyebrow: text.remindersTitle },
     { id: "emotions", label: text.emotionsTab, eyebrow: text.emotionsEyebrow },
     { id: "about", label: text.aboutTab, eyebrow: text.aboutEyebrow },
   ];
@@ -79,6 +89,40 @@ export function SettingsWindow() {
   useEffect(() => {
     void refreshCustomModels();
   }, []);
+
+  useEffect(() => {
+    void listReminders().then(setReminders).catch(() => setReminders([]));
+    let stop: (() => void) | undefined;
+    void listen<Reminder>("reminder-fired", () => { void listReminders().then(setReminders).catch(() => undefined); }).then((unlisten) => { stop = unlisten; });
+    return () => stop?.();
+  }, []);
+
+  const newReminder = () => {
+    const runAt = new Date(Date.now() + 10 * 60 * 1000);
+    runAt.setSeconds(0, 0);
+    setEditingReminder({ id: crypto.randomUUID(), title: "", enabled: true, schedule: "once", runAt: runAt.toISOString(), intervalMinutes: 30, emotion: settings.emotion, systemNotification: false, nextRunAt: null, lastFiredAt: null });
+    setReminderFeedback(null);
+  };
+  const updateReminderDraft = <K extends keyof Reminder>(key: K, value: Reminder[K]) => setEditingReminder((draft) => draft ? { ...draft, [key]: value } : draft);
+  const updateReminderDatePart = (part: "date" | "time", value: string) => {
+    if (!editingReminder || !value) return;
+    const current = localDateTimeValue(editingReminder.runAt);
+    const next = part === "date" ? `${value}T${current.slice(11)}` : `${current.slice(0, 10)}T${value}`;
+    const date = new Date(next);
+    if (!Number.isNaN(date.getTime())) updateReminderDraft("runAt", date.toISOString());
+  };
+  const persistReminder = async () => {
+    if (!editingReminder || !editingReminder.title.trim()) return;
+    try {
+      const updated = await saveReminder({ ...editingReminder, title: editingReminder.title.trim() });
+      setReminders(updated);
+      setEditingReminder(null);
+      setReminderFeedback(text.reminderSaved);
+    } catch { setReminderFeedback(text.updateFailed); }
+  };
+  const removeReminder = async (id: string) => {
+    try { setReminders(await deleteReminder(id)); } catch { setReminderFeedback(text.updateFailed); }
+  };
 
   const refreshAutostart = async () => {
     setAutostartState("loading");
@@ -165,6 +209,15 @@ export function SettingsWindow() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [pendingModelAction]);
+
+  useEffect(() => {
+    if (!editingReminder) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setEditingReminder(null);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [editingReminder]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -431,7 +484,7 @@ export function SettingsWindow() {
     <section className="dashboard-workspace">
       <header className="dashboard-workspace-header">
         <div><span>{activeTabDefinition.eyebrow}</span><h1>{activeTabDefinition.label}</h1></div>
-        {activeTab !== "about" && <button className="reset-button" type="button" onClick={resetSettings}>{text.reset}</button>}
+        {activeTab !== "about" && activeTab !== "reminders" && <button className="reset-button" type="button" onClick={resetSettings}>{text.reset}</button>}
       </header>
       <div className={`dashboard-scroll dashboard-scroll-${activeTab}`}>
         <div key={activeTab} id="dashboard-panel" className={`dashboard-panel dashboard-panel-${activeTab}`} role="tabpanel" aria-labelledby={`dashboard-tab-${activeTab}`}>
@@ -493,6 +546,30 @@ export function SettingsWindow() {
                 </div>
               </div>
             </section>
+          </div>}
+          {activeTab === "reminders" && <div className="reminders-layout settings-groups">
+            <section className="settings-group reminders-overview">
+              <div className="reminder-hero"><div className="reminder-hero-copy"><span className="control-label">SCHEDULER / 01</span><h2>{text.remindersTitle}</h2><p>{text.remindersHint}</p></div><div className="reminder-hero-stat"><strong>{String(reminders.filter((reminder) => reminder.enabled).length).padStart(2, "0")}</strong><span>{text.reminderEnabled}</span></div></div>
+              <div className="reminders-toolbar"><div><span className="reminder-toolbar-label">{text.reminderRoutines}</span><span className="reminder-toolbar-count">{String(reminders.length).padStart(2, "0")}</span></div><button type="button" className="shortcut-capture" onClick={newReminder}><span aria-hidden="true">+</span>{text.addReminder}</button></div>
+                {reminderFeedback && <small className="reminder-feedback" role="status">{reminderFeedback}</small>}
+              <div className="reminder-list">
+                {reminders.length === 0 && <div className="reminder-empty"><strong>{text.noReminders}</strong><span>{text.addReminder}</span></div>}
+                {reminders.map((reminder) => <article className={`reminder-card${reminder.enabled ? " enabled" : ""}`} key={reminder.id}>
+                  <div className="reminder-card-main"><div className="reminder-time"><strong>{reminder.nextRunAt ? new Date(reminder.nextRunAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--"}</strong><small>{reminder.nextRunAt ? new Date(reminder.nextRunAt * 1000).toLocaleDateString([], { month: "short", day: "numeric" }) : text.reminderPaused}</small></div><div className="reminder-card-copy"><div className="reminder-title-line"><strong>{reminder.title}</strong><span className={`reminder-status-chip${reminder.enabled ? " active" : ""}`}>{reminder.enabled ? text.reminderOn : text.reminderOff}</span></div><small>{reminder.schedule === "once" ? text.once : reminder.schedule === "daily" ? text.daily : reminder.schedule === "weekdays" ? text.weekdays : `${text.interval} · ${reminder.intervalMinutes ?? 60}m`}</small></div><label className="reminder-switch" aria-label={text.reminderEnabled}><input type="checkbox" checked={reminder.enabled} onChange={() => void saveReminder({ ...reminder, enabled: !reminder.enabled }).then(setReminders).catch(() => setReminderFeedback(text.updateFailed))} /><i /></label></div>
+                  <div className="reminder-actions"><button type="button" className="autostart-refresh" onClick={() => setEditingReminder(reminder)}>{text.editReminder}</button><button type="button" className="reminder-delete" onClick={() => void removeReminder(reminder.id)}>{text.deleteReminder}</button></div>
+                </article>)}
+              </div>
+            </section>
+            {editingReminder && <div className="reminder-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditingReminder(null); }}><aside className="settings-group reminder-editor" role="dialog" aria-modal="true" aria-labelledby="reminder-editor-title">
+              <div className="reminder-editor-heading"><div className="group-heading"><span className="control-label">TASK</span><h2 id="reminder-editor-title">{editingReminder.title ? text.editReminder : text.addReminder}</h2></div><button type="button" className="reminder-editor-close" aria-label={text.cancelReminder} onClick={() => setEditingReminder(null)}>×</button></div>
+              <label className="reminder-field"><span>{text.reminderTitle}</span><input autoFocus value={editingReminder.title} onChange={(event) => updateReminderDraft("title", event.target.value)} placeholder={text.reminderTitle} /></label>
+              <div className="reminder-field reminder-date-field"><span>{text.reminderTime}</span><div className="reminder-date-inputs"><label><small>{text.reminderDate}</small><input type="date" aria-label={text.reminderDate} value={localDateTimeValue(editingReminder.runAt).slice(0, 10)} onChange={(event) => updateReminderDatePart("date", event.target.value)} /></label><label><small>{text.reminderClock}</small><input type="time" aria-label={text.reminderClock} value={localDateTimeValue(editingReminder.runAt).slice(11)} onChange={(event) => updateReminderDatePart("time", event.target.value)} /></label></div></div>
+              <label className="reminder-field"><span>{text.reminderSchedule}</span><select value={editingReminder.schedule} onChange={(event) => updateReminderDraft("schedule", event.target.value as ReminderSchedule)}><option value="once">{text.once}</option><option value="daily">{text.daily}</option><option value="weekdays">{text.weekdays}</option><option value="interval">{text.interval}</option></select></label>
+              {editingReminder.schedule === "interval" && <label className="reminder-field"><span>{text.intervalMinutes}</span><input type="number" min="1" max="10080" value={editingReminder.intervalMinutes ?? 30} onChange={(event) => updateReminderDraft("intervalMinutes", Math.max(1, Number(event.target.value) || 1))} /></label>}
+              <label className="reminder-field"><span>{text.reminderEmotion}</span><select value={editingReminder.emotion} onChange={(event) => updateReminderDraft("emotion", event.target.value)}>{Object.entries(livelyMascot?.emotions ?? {}).map(([id, emotion]) => <option key={id} value={id}>{emotion.desc || emotion.name || id}</option>)}</select></label>
+              <label className="toggle-row"><span><strong>{text.reminderEnabled}</strong></span><input type="checkbox" checked={editingReminder.enabled} onChange={(event) => updateReminderDraft("enabled", event.target.checked)} /><i /></label>
+              <div className="reminder-editor-actions"><button type="button" className="shortcut-capture" disabled={!editingReminder.title.trim()} onClick={() => void persistReminder()}>{text.saveReminder}</button><button type="button" className="autostart-refresh" onClick={() => setEditingReminder(null)}>{text.cancelReminder}</button></div>
+            </aside></div>}
           </div>}
           {activeTab === "emotions" && <div className="emotion-layout">
             <aside className="preview-pane emotion-preview"><div className="preview-stage"><div ref={previewRef} className="preview-host" /></div><button className="apply-emotion-button" type="button" onClick={() => { update("emotion", previewEmotion); setEmotionApplied(true); }}>{text.setEmotion}<span aria-hidden="true">↗</span></button>{emotionApplied && <small className="emotion-applied" role="status">{text.emotionApplied}</small>}</aside>
