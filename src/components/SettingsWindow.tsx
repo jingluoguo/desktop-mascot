@@ -425,7 +425,7 @@ export function SettingsWindow() {
       <div className="dashboard-sidebar-footer">
         <div className="preference-control"><span>{text.language}</span><div className="segmented" role="group" aria-label={text.language}><button type="button" aria-pressed={dashboardPreferences.locale === "zh-CN"} className={dashboardPreferences.locale === "zh-CN" ? "selected" : ""} onClick={() => updateDashboardPreference("locale", "zh-CN")}>中文</button><button type="button" aria-pressed={dashboardPreferences.locale === "en"} className={dashboardPreferences.locale === "en" ? "selected" : ""} onClick={() => updateDashboardPreference("locale", "en")}>EN</button></div></div>
         <div className="preference-control"><span>{text.theme}</span><div className="segmented" role="group" aria-label={text.theme}><button type="button" aria-pressed={dashboardPreferences.theme === "light"} className={dashboardPreferences.theme === "light" ? "selected" : ""} onClick={() => updateDashboardPreference("theme", "light")}>{text.light}</button><button type="button" aria-pressed={dashboardPreferences.theme === "dark"} className={dashboardPreferences.theme === "dark" ? "selected" : ""} onClick={() => updateDashboardPreference("theme", "dark")}>{text.dark}</button></div></div>
-        <span className="dashboard-version">v0.1.0 · lively 0.3.1</span>
+        <span className="dashboard-version">v0.2.0 · lively 0.3.1</span>
       </div>
     </aside>
     <section className="dashboard-workspace">
