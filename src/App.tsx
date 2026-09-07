@@ -1,4 +1,3 @@
-import "lively-mascot/dist/lively-mascot.min.js";
 import "lively-mascot/dist/lively-mascot.min.css";
 import "./App.css";
 import { ContextMenuWindow } from "./components/ContextMenuWindow";
