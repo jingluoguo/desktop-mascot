@@ -44,11 +44,45 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
+      - name: Validate updater signing key
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          key_path="$RUNNER_TEMP/tauri-updater.key"
+          key_value="$TAURI_SIGNING_PRIVATE_KEY"
+
+          if [[ -z "$key_value" ]]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is not configured."
+            exit 1
+          fi
+
+          # Tauri accepts the generated key file content (normally one Base64
+          # line). Also accept a multiline minisign file for easier Secret setup.
+          if [[ "$key_value" == *$'\n'* ]]; then
+            if ! grep -q '^untrusted comment: ' <<< "$key_value"; then
+              echo "TAURI_SIGNING_PRIVATE_KEY must contain the complete minisign key, including its comment."
+              exit 1
+            fi
+            printf '%s' "$key_value" > "$key_path"
+          else
+            if ! decoded_key=$(printf '%s' "$key_value" | base64 --decode 2>/dev/null); then
+              echo "TAURI_SIGNING_PRIVATE_KEY is not valid Base64."
+              exit 1
+            fi
+            if ! grep -q '^untrusted comment: ' <<< "$decoded_key"; then
+              echo "TAURI_SIGNING_PRIVATE_KEY must be the complete generated key, not only the decoded payload or public key."
+              exit 1
+            fi
+            printf '%s' "$key_value" > "$key_path"
+          fi
+
+          echo "TAURI_SIGNING_PRIVATE_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
       - name: Build and upload release assets
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # macOS 签名 + 公证（仅 macOS 任务生效，Windows 忽略这些变量）
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}

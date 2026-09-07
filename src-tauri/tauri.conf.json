@@ -46,7 +46,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4RDEwRTkzQjg0Q0E3MjgKUldRb3AweTRrdzdSeUJHVFpqdFR2R1AwMnJUT3hLekpsQzYxakkyU3dNOVMvaEIwZ1JlVVIxb0IK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQyQTExMzM1ODdERjE3QUQKUldTdEY5K0hOUk9oMG9KYnp6YmNBTkhXZmkzVVlaRTdhM202OHE0b08yT1RJZjFOUHkzeUlCNWUK",
       "endpoints": [
         "https://github.com/jingluoguo/desktop-mascot/releases/latest/download/latest.json"
       ]

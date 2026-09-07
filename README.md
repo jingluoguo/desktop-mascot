@@ -54,7 +54,7 @@ yarn tauri build
 
 应用发布版启动时会先读取 `AUTHOR_DATA_URL` 中 `desktop-mascot` 项的版本。只有远程版本高于当前版本时，才会继续检查 `jingluoguo/desktop-mascot` 的最新 GitHub Release；存在当前平台经过签名的更新包时，应用会自动下载，下载完成后由用户确认重启并安装。
 
-首次发布前，需要将本机的 `src-tauri/.tauri/updater.key` 内容配置为仓库 Secret `TAURI_SIGNING_PRIVATE_KEY`。如生成密钥时设置了密码，还需配置 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。私钥已被 `.gitignore` 排除，不能提交到仓库。
+首次发布前，需要将本机 `src-tauri/.tauri/updater.key` 的完整内容配置为仓库 Secret `TAURI_SIGNING_PRIVATE_KEY`。该文件通常是一行 Base64 文本，不能只复制 Base64 解码后的内容、`updater.key.pub` 公钥或其中一行。如生成密钥时设置了密码，还需将同一个密码配置为 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。私钥已被 `.gitignore` 排除，不能提交到仓库。Workflow 会在构建前校验密钥格式。
 
 ## Logo
 
