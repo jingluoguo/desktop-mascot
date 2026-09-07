@@ -34,6 +34,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -42,5 +43,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4RDEwRTkzQjg0Q0E3MjgKUldRb3AweTRrdzdSeUJHVFpqdFR2R1AwMnJUT3hLekpsQzYxakkyU3dNOVMvaEIwZ1JlVVIxb0IK",
+      "endpoints": [
+        "https://github.com/jingluoguo/desktop-mascot/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

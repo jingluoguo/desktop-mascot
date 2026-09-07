@@ -50,6 +50,12 @@ yarn tauri build
 
 构建产物由 Tauri 输出到 `src-tauri/target/release/bundle/`。
 
+## 应用内更新
+
+应用发布版启动时会检查 `jingluoguo/desktop-mascot` 的最新 GitHub Release。只有当前平台存在经过签名的更新包时，应用才会自动下载；下载完成后由用户确认重启并安装。
+
+首次发布前，需要将本机的 `src-tauri/.tauri/updater.key` 内容配置为仓库 Secret `TAURI_SIGNING_PRIVATE_KEY`。如生成密钥时设置了密码，还需配置 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。私钥已被 `.gitignore` 排除，不能提交到仓库。
+
 ## Logo
 
 应用 logo 源文件位于 [`src-tauri/icons/desktop-mascot-logo.svg`](src-tauri/icons/desktop-mascot-logo.svg)，网页 favicon 位于 [`public/favicon.svg`](public/favicon.svg)。Tauri 的 PNG、ICO 和 ICNS 图标会由该 SVG 生成并放在 `src-tauri/icons/` 中。

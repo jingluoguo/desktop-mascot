@@ -3,6 +3,8 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import type { MascotInstance } from "lively-mascot";
 import { MAX_MASCOT_SIZE } from "../config";
@@ -34,7 +36,67 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   const [settings, setSettings] = useState(loadSettings);
   const settingsRef = useRef(settings);
   const [activeEmotion, setActiveEmotion] = useState(settings.emotion);
+  const [updateState, setUpdateState] = useState<"idle" | "checking" | "downloading" | "ready" | "error">("idle");
+  const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
+  const [updateVersion, setUpdateVersion] = useState("");
+  const [updateProgress, setUpdateProgress] = useState(0);
   settingsRef.current = settings;
+
+  useEffect(() => {
+    if (!import.meta.env.PROD) return;
+    let cancelled = false;
+    const checkForUpdate = async () => {
+      setUpdateState("checking");
+      let update: Update | null;
+      try {
+        update = await check();
+      } catch {
+        if (!cancelled) setUpdateState("idle");
+        return;
+      }
+      if (cancelled || !update) {
+        if (!cancelled) setUpdateState("idle");
+        return;
+      }
+      setAvailableUpdate(update);
+      setUpdateVersion(update.version);
+      setUpdateProgress(0);
+      setUpdateState("downloading");
+      try {
+        let downloaded = 0;
+        let total = 0;
+        await update.download((event: DownloadEvent) => {
+          if (cancelled) return;
+          if (event.event === "Started") {
+            total = event.data.contentLength ?? 0;
+            downloaded = 0;
+            setUpdateProgress(0);
+          } else if (event.event === "Progress" && total > 0) {
+            downloaded += event.data.chunkLength;
+            setUpdateProgress(Math.min(100, downloaded / total * 100));
+          } else if (event.event === "Finished") {
+            setUpdateProgress(100);
+          }
+        });
+        if (!cancelled) setUpdateState("ready");
+      } catch {
+        if (!cancelled) setUpdateState("error");
+      }
+    };
+    void checkForUpdate();
+    return () => { cancelled = true; };
+  }, []);
+
+  const installUpdate = async () => {
+    if (!availableUpdate) return;
+    setUpdateState("downloading");
+    try {
+      await availableUpdate.install();
+      await relaunch();
+    } catch {
+      setUpdateState("error");
+    }
+  };
 
   const triggerHappy = () => {
     if (happyResetTimerRef.current !== null) window.clearTimeout(happyResetTimerRef.current);
@@ -296,6 +358,14 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
 
   return <main className="pet-window" onContextMenu={openContextMenu}>
     <div ref={hostRef} className="pet-host" aria-label="可拖拽的桌面宠物" />
+    {updateState !== "idle" && updateState !== "checking" && <div className="update-overlay" role="status">
+      <div className="update-card">
+        <span className="update-kicker">DESKTOP MASCOT</span>
+        {updateState === "downloading" && <><strong>正在下载更新 {updateVersion ? `v${updateVersion}` : ""}</strong><div className="update-progress"><i style={{ width: `${updateProgress}%` }} /></div><small>{updateProgress > 0 ? `${Math.round(updateProgress)}%` : "正在连接更新服务器…"}</small></>}
+        {updateState === "ready" && <><strong>更新已下载完成（v{updateVersion}）</strong><small>现在重启应用并安装更新吗？</small><div className="update-actions"><button type="button" onClick={() => void installUpdate()}>重启更新</button><button type="button" className="secondary" onClick={() => setUpdateState("idle")}>稍后</button></div></>}
+        {updateState === "error" && <><strong>更新下载失败</strong><small>请稍后重试，或前往 GitHub Release 手动更新。</small><div className="update-actions"><button type="button" onClick={() => window.location.reload()}>重新检查</button><button type="button" className="secondary" onClick={() => setUpdateState("idle")}>关闭</button></div></>}
+      </div>
+    </div>}
   </main>;
 }
 

@@ -38,6 +38,7 @@ Thumbs.db
 # ── Tauri / Rust（兜底，具体规则见 src-tauri/.gitignore）
 src-tauri/target/
 src-tauri/gen/schemas/
+src-tauri/.tauri/
 
 # ── 本地工具数据 ───────────────────────────────────────
 .workbuddy/
