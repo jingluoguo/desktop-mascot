@@ -354,7 +354,7 @@ button { font: inherit; }
   justify-content: space-between;
   gap: 24px;
   min-height: 108px;
-  padding: 28px 46px 22px;
+  padding: 28px var(--dashboard-gutter, 46px) 22px;
   border-bottom: 1px solid var(--line);
   background: rgba(15, 18, 19, .82);
   backdrop-filter: blur(22px) saturate(120%);
@@ -372,7 +372,7 @@ button { font: inherit; }
   width: min(1120px, 100%);
   min-height: 100%;
   margin: 0 auto;
-  padding: 38px 46px 50px;
+  padding: 38px var(--dashboard-gutter, 46px) 50px;
   animation: dashboard-panel-in 260ms cubic-bezier(.2, .8, .2, 1) both;
 }
 @keyframes dashboard-panel-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
@@ -1157,6 +1157,15 @@ button.work-card:focus-visible { outline: 2px solid var(--accent); outline-offse
   --sidebar: #19211f;
   --raised: #1b2523;
   --line: transparent;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --dashboard-gutter: 46px;
+  --dashboard-section-gap: 42px;
   background: #111817;
 }
 .dashboard-sidebar {
@@ -1171,8 +1180,8 @@ button.work-card:focus-visible { outline: 2px solid var(--accent); outline-offse
   box-shadow: none;
 }
 .dashboard-sidebar-footer {
-  gap: 12px 10px;
-  padding-top: 16px;
+  gap: var(--space-3) 10px;
+  padding-top: var(--space-4);
   border-top: 0;
 }
 .dashboard-tabs { gap: 7px; }
@@ -1189,7 +1198,7 @@ button.work-card:focus-visible { outline: 2px solid var(--accent); outline-offse
 .dashboard-tabs button.selected::before { display: none; }
 .dashboard-tabs button.selected > span { color: #b5f4e4; }
 .dashboard-panel { padding-top: 44px; }
-.settings-groups { gap: 42px; }
+.settings-groups { gap: var(--dashboard-section-gap); }
 .settings-group,
 .settings-group + .settings-group,
 .behavior-layout .settings-group,
@@ -1197,7 +1206,7 @@ button.work-card:focus-visible { outline: 2px solid var(--accent); outline-offse
   padding: 0;
   border: 0;
 }
-.group-heading { gap: 7px; margin-bottom: 16px; }
+.group-heading { gap: var(--space-2); margin-bottom: var(--space-4); }
 .group-heading h2 { font-weight: 600; }
 .dashboard-panel .preview-stage {
   border: 0;
