@@ -20,6 +20,9 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   const scaleValueRef = useRef(1);
   const scaleVelocityRef = useRef(0);
   const pointerPollBusyRef = useRef(false);
+  const followCursorPositionRef = useRef<PhysicalPosition | null>(null);
+  const followCursorScaleFactorRef = useRef<number | null>(null);
+  const lastFollowCursorRef = useRef<PhysicalPosition | null>(null);
   const dragFrameRef = useRef<number | null>(null);
   const dragCursorPollRef = useRef<number | null>(null);
   const dragCursorPollBusyRef = useRef(false);
@@ -280,25 +283,78 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   useEffect(() => {
     if (!settings.followCursor) return;
     const appWindow = getCurrentWindow();
+    let disposed = false;
+    let unlistenMoved: (() => void) | undefined;
+    let unlistenScaleChanged: (() => void) | undefined;
+
+    const dispatchPointerMove = (cursor: PhysicalPosition) => {
+      const windowPosition = followCursorPositionRef.current;
+      const scaleFactor = followCursorScaleFactorRef.current;
+      if (!windowPosition || !scaleFactor) return;
+      window.dispatchEvent(new PointerEvent("pointermove", {
+        bubbles: true,
+        clientX: (cursor.x - windowPosition.x) / scaleFactor,
+        clientY: (cursor.y - windowPosition.y) / scaleFactor,
+        pointerId: 1,
+        pointerType: "mouse",
+      }));
+    };
+
+    // Window coordinates rarely change. Cache them from native events instead
+    // of requesting all three values on every cursor sample.
+    void Promise.all([appWindow.outerPosition(), appWindow.scaleFactor()]).then(([position, scaleFactor]) => {
+      if (disposed) return;
+      followCursorPositionRef.current = position;
+      followCursorScaleFactorRef.current = scaleFactor;
+    }).catch(() => {
+      // Browser previews do not expose native window events or coordinates.
+    });
+    void (async () => {
+      const removeMoved = await appWindow.onMoved(({ payload }) => {
+        followCursorPositionRef.current = payload;
+      });
+      if (disposed) {
+        removeMoved();
+        return;
+      }
+      unlistenMoved = removeMoved;
+
+      const removeScaleChanged = await appWindow.onScaleChanged(({ payload }) => {
+        followCursorScaleFactorRef.current = payload.scaleFactor;
+      });
+      if (disposed) {
+        removeScaleChanged();
+        return;
+      }
+      unlistenScaleChanged = removeScaleChanged;
+    })().catch(() => {
+      // Browser previews do not expose native window events or coordinates.
+    });
+
     const pointerPoll = window.setInterval(async () => {
-      if (pointerPollBusyRef.current) return;
+      if (document.hidden || dragStateRef.current || pointerPollBusyRef.current) return;
       pointerPollBusyRef.current = true;
       try {
-        const [cursor, windowPosition, scaleFactor] = await Promise.all([cursorPosition(), appWindow.outerPosition(), appWindow.scaleFactor()]);
-        window.dispatchEvent(new PointerEvent("pointermove", {
-          bubbles: true,
-          clientX: (cursor.x - windowPosition.x) / scaleFactor,
-          clientY: (cursor.y - windowPosition.y) / scaleFactor,
-          pointerId: 1,
-          pointerType: "mouse",
-        }));
+        const cursor = await cursorPosition();
+        const previousCursor = lastFollowCursorRef.current;
+        if (previousCursor && previousCursor.x === cursor.x && previousCursor.y === cursor.y) return;
+        lastFollowCursorRef.current = cursor;
+        dispatchPointerMove(cursor);
       } catch {
         // Browser previews do not expose native cursor coordinates.
       } finally {
         pointerPollBusyRef.current = false;
       }
-    }, 50);
-    return () => window.clearInterval(pointerPoll);
+    }, 100);
+    return () => {
+      disposed = true;
+      window.clearInterval(pointerPoll);
+      unlistenMoved?.();
+      unlistenScaleChanged?.();
+      followCursorPositionRef.current = null;
+      followCursorScaleFactorRef.current = null;
+      lastFollowCursorRef.current = null;
+    };
   }, [settings.followCursor]);
 
   useEffect(() => () => {
