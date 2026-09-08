@@ -10,6 +10,12 @@ import type { MascotSettings, Reminder } from "../types";
 import { loadSettings, openSettingsWindow, persistSettings, petWindowSize, setGlobalShortcuts } from "../lib/settings";
 import { getLivelyMascot } from "../lib/mascotRuntime";
 import { checkForAppUpdate } from "../lib/appUpdates";
+
+const MODEL_HIT_SELECTOR = [
+  ".pet-host .lively-mascot .lively-body:not(.lively-body--custom-model)",
+  ".pet-host .lively-mascot svg",
+].join(", ");
+
 export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { modelRegistryVersion: number; onModelRegistryReload: () => Promise<void> }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const mascotRef = useRef<MascotInstance | null>(null);
@@ -23,6 +29,7 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   const followCursorPositionRef = useRef<PhysicalPosition | null>(null);
   const followCursorScaleFactorRef = useRef<number | null>(null);
   const lastFollowCursorRef = useRef<PhysicalPosition | null>(null);
+  const ignoreCursorEventsRef = useRef(false);
   const dragFrameRef = useRef<number | null>(null);
   const dragCursorPollRef = useRef<number | null>(null);
   const dragCursorPollBusyRef = useRef(false);
@@ -356,6 +363,75 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
       lastFollowCursorRef.current = null;
     };
   }, [settings.followCursor]);
+
+  useEffect(() => {
+    const appWindow = getCurrentWindow();
+    let disposed = false;
+    let hitTestBusy = false;
+    let unlistenMoved: (() => void) | undefined;
+    let unlistenScaleChanged: (() => void) | undefined;
+    const setCursorEventsIgnored = (ignore: boolean) => {
+      if (disposed || ignoreCursorEventsRef.current === ignore) return;
+      ignoreCursorEventsRef.current = ignore;
+      void appWindow.setIgnoreCursorEvents(ignore).catch(() => undefined);
+    };
+    setCursorEventsIgnored(true);
+    const handlePointerMove = (event: PointerEvent) => {
+      if (!event.isTrusted) return;
+      const target = event.target instanceof Element ? event.target : null;
+      setCursorEventsIgnored(!target?.closest(MODEL_HIT_SELECTOR));
+    };
+    const hitTestCursor = async () => {
+      if (hitTestBusy || disposed) return;
+      hitTestBusy = true;
+      try {
+        const cursor = await cursorPosition();
+        const windowPosition = followCursorPositionRef.current;
+        const scaleFactor = followCursorScaleFactorRef.current;
+        if (!windowPosition || !scaleFactor) return;
+        const element = document.elementFromPoint(
+          (cursor.x - windowPosition.x) / scaleFactor,
+          (cursor.y - windowPosition.y) / scaleFactor,
+        );
+        setCursorEventsIgnored(!element?.closest(MODEL_HIT_SELECTOR));
+      } catch {
+        // Browser previews do not expose native cursor coordinates.
+      } finally {
+        hitTestBusy = false;
+      }
+    };
+    void Promise.all([appWindow.outerPosition(), appWindow.scaleFactor()]).then(([position, scaleFactor]) => {
+      if (disposed) return;
+      followCursorPositionRef.current = position;
+      followCursorScaleFactorRef.current = scaleFactor;
+    }).catch(() => undefined);
+    void appWindow.onMoved(({ payload }) => {
+      followCursorPositionRef.current = payload;
+    }).then((dispose) => {
+      if (disposed) dispose();
+      else unlistenMoved = dispose;
+    }).catch(() => undefined);
+    void appWindow.onScaleChanged(({ payload }) => {
+      followCursorScaleFactorRef.current = payload.scaleFactor;
+    }).then((dispose) => {
+      if (disposed) dispose();
+      else unlistenScaleChanged = dispose;
+    }).catch(() => undefined);
+    window.addEventListener("pointermove", handlePointerMove, true);
+    const hitTestPoll = window.setInterval(() => {
+      if (ignoreCursorEventsRef.current) void hitTestCursor();
+    }, 120);
+    void hitTestCursor();
+    return () => {
+      disposed = true;
+      window.clearInterval(hitTestPoll);
+      window.removeEventListener("pointermove", handlePointerMove, true);
+      unlistenMoved?.();
+      unlistenScaleChanged?.();
+      void appWindow.setIgnoreCursorEvents(false).catch(() => undefined);
+      ignoreCursorEventsRef.current = false;
+    };
+  }, []);
 
   useEffect(() => () => {
     if (happyResetTimerRef.current !== null) window.clearTimeout(happyResetTimerRef.current);
