@@ -97,16 +97,34 @@ struct ReminderManagerState {
     data_path: Mutex<Option<PathBuf>>,
 }
 
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum DockEdge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+#[derive(Clone)]
+enum DockState {
+    Docked(DockEdge),
+    Revealed(DockEdge),
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 struct SavedWindowPosition {
     x: i32,
     y: i32,
+    #[serde(default)]
+    docked_edge: Option<DockEdge>,
 }
 
 struct WindowPositionPersistence {
     path: PathBuf,
     latest: Mutex<Option<SavedWindowPosition>>,
     last_saved: Mutex<Option<Instant>>,
+    dock_state: Mutex<Option<DockState>>,
 }
 
 struct WindowPositionState(Arc<WindowPositionPersistence>);
@@ -132,9 +150,15 @@ fn write_saved_window_position(path: &Path, position: &SavedWindowPosition) {
 
 fn persist_window_position(
     state: &WindowPositionPersistence,
-    position: SavedWindowPosition,
+    mut position: SavedWindowPosition,
     force: bool,
 ) {
+    if let Ok(dock_state) = state.dock_state.lock() {
+        position.docked_edge = match &*dock_state {
+            Some(DockState::Docked(edge)) => Some(edge.clone()),
+            _ => None,
+        };
+    }
     if let Ok(mut latest) = state.latest.lock() {
         *latest = Some(position.clone());
     }
@@ -165,6 +189,7 @@ fn persist_current_window_position<R: tauri::Runtime>(app: &tauri::AppHandle<R>,
             SavedWindowPosition {
                 x: position.x,
                 y: position.y,
+                docked_edge: None,
             },
             force,
         );
@@ -1168,6 +1193,272 @@ fn resize_main_window<R: tauri::Runtime>(
         .map_err(|error| error.to_string())
 }
 
+fn monitor_work_area<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+) -> Result<(tauri::PhysicalPosition<i32>, tauri::PhysicalSize<u32>, f64), String> {
+    let monitor = window
+        .current_monitor()
+        .map_err(|error| error.to_string())?
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or_else(|| "no monitor is available".to_string())?;
+    Ok((
+        monitor.work_area().position,
+        monitor.work_area().size,
+        monitor.scale_factor(),
+    ))
+}
+
+#[tauri::command]
+fn dock_main_window_to_edge<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    window_x: i32,
+    window_y: i32,
+) -> Result<bool, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window is unavailable".to_string())?;
+    let size = window.outer_size().map_err(|error| error.to_string())?;
+    // The renderer computes the exact release position. Use it rather than
+    // querying the window again, because the native position update can lag a
+    // frame behind the pointer-up event.
+    let position = PhysicalPosition::new(window_x, window_y);
+    let window_center_x = window_x.saturating_add(size.width as i32 / 2);
+    let window_center_y = window_y.saturating_add(size.height as i32 / 2);
+    let monitor = app
+        .monitor_from_point(window_center_x as f64, window_center_y as f64)
+        .map_err(|error| error.to_string())?
+        .or_else(|| window.current_monitor().ok().flatten())
+        // A window can be fully outside every display while it is dragged.
+        // In that case, return it to the nearest work area rather than
+        // abandoning the dock request and leaving the mascot inaccessible.
+        .or_else(|| {
+            app.available_monitors()
+                .ok()?
+                .into_iter()
+                .min_by_key(|monitor| {
+                    let area = monitor.work_area();
+                    let area_right = area.position.x.saturating_add(area.size.width as i32);
+                    let area_bottom = area.position.y.saturating_add(area.size.height as i32);
+                    let horizontal_distance = if window_center_x < area.position.x {
+                        area.position.x - window_center_x
+                    } else if window_center_x > area_right {
+                        window_center_x - area_right
+                    } else {
+                        0
+                    };
+                    let vertical_distance = if window_center_y < area.position.y {
+                        area.position.y - window_center_y
+                    } else if window_center_y > area_bottom {
+                        window_center_y - area_bottom
+                    } else {
+                        0
+                    };
+                    horizontal_distance.saturating_add(vertical_distance)
+                })
+        })
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or_else(|| "no monitor is available".to_string())?;
+    let area = monitor.work_area();
+    let (area_position, area_size, scale_factor) =
+        (area.position, area.size, monitor.scale_factor());
+    let area_right = area_position.x + area_size.width as i32;
+    let area_bottom = area_position.y + area_size.height as i32;
+    // Use the window bounds for the snap test instead of the cursor alone.
+    // The mascot is rendered on a transparent canvas, so the pointer can be
+    // several pixels inside the window even when the visible model is already
+    // at the edge. This also makes dragging from different parts of a model
+    // behave consistently.
+    let window_right = position.x.saturating_add(size.width as i32);
+    let window_bottom = position.y.saturating_add(size.height as i32);
+    let distances = [
+        (position.x - area_position.x).max(0),
+        (area_right - window_right).max(0),
+        (position.y - area_position.y).max(0),
+        (area_bottom - window_bottom).max(0),
+    ];
+    let threshold = (48.0 * scale_factor).round() as i32;
+    let Some((edge, distance)) = distances
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, distance)| *distance)
+    else {
+        return Ok(false);
+    };
+    if *distance > threshold {
+        if let Some(state) = app.try_state::<WindowPositionState>() {
+            if let Ok(mut dock_state) = state.0.dock_state.lock() {
+                *dock_state = None;
+            }
+            persist_current_window_position(&app, true);
+        }
+        return Ok(false);
+    }
+    let dock_edge = match edge {
+        0 => DockEdge::Left,
+        1 => DockEdge::Right,
+        2 => DockEdge::Top,
+        _ => DockEdge::Bottom,
+    };
+    let peek = (14.0 * scale_factor).round() as i32;
+    let docked = match edge {
+        0 => PhysicalPosition::new(
+            area_position.x - size.width as i32 / 2 + peek,
+            position
+                .y
+                .clamp(area_position.y, area_bottom - size.height as i32),
+        ),
+        1 => PhysicalPosition::new(
+            area_right - size.width as i32 / 2 - peek,
+            position
+                .y
+                .clamp(area_position.y, area_bottom - size.height as i32),
+        ),
+        2 => PhysicalPosition::new(
+            position
+                .x
+                .clamp(area_position.x, area_right - size.width as i32),
+            area_position.y - size.height as i32 / 2 + peek,
+        ),
+        _ => PhysicalPosition::new(
+            position
+                .x
+                .clamp(area_position.x, area_right - size.width as i32),
+            area_bottom - size.height as i32 / 2 - peek,
+        ),
+    };
+    if docked.x == position.x && docked.y == position.y {
+        return Ok(false);
+    }
+    let Some(state) = app.try_state::<WindowPositionState>() else {
+        return Err("window position persistence is unavailable".to_string());
+    };
+    *state
+        .0
+        .dock_state
+        .lock()
+        .map_err(|error| error.to_string())? = Some(DockState::Docked(dock_edge));
+    if let Err(error) = window.set_position(docked) {
+        if let Ok(mut dock_state) = state.0.dock_state.lock() {
+            *dock_state = None;
+        }
+        return Err(error.to_string());
+    }
+    persist_current_window_position(&app, true);
+    Ok(true)
+}
+
+#[tauri::command]
+fn reveal_main_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<bool, String> {
+    let Some(state) = app.try_state::<WindowPositionState>() else {
+        return Ok(false);
+    };
+    let dock_state = state
+        .0
+        .dock_state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone();
+    let Some(DockState::Docked(dock_edge)) = dock_state else {
+        return Ok(false);
+    };
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window is unavailable".to_string())?;
+    let (area_position, area_size, _) = monitor_work_area(&window)?;
+    let position = window.outer_position().map_err(|error| error.to_string())?;
+    let size = window.outer_size().map_err(|error| error.to_string())?;
+    let area_right = area_position.x + area_size.width as i32;
+    let area_bottom = area_position.y + area_size.height as i32;
+    let revealed = match dock_edge {
+        DockEdge::Left => PhysicalPosition::new(
+            area_position.x,
+            position
+                .y
+                .clamp(area_position.y, area_bottom - size.height as i32),
+        ),
+        DockEdge::Right => PhysicalPosition::new(
+            area_right - size.width as i32,
+            position
+                .y
+                .clamp(area_position.y, area_bottom - size.height as i32),
+        ),
+        DockEdge::Top => PhysicalPosition::new(
+            position
+                .x
+                .clamp(area_position.x, area_right - size.width as i32),
+            area_position.y,
+        ),
+        DockEdge::Bottom => PhysicalPosition::new(
+            position
+                .x
+                .clamp(area_position.x, area_right - size.width as i32),
+            area_bottom - size.height as i32,
+        ),
+    };
+    *state
+        .0
+        .dock_state
+        .lock()
+        .map_err(|error| error.to_string())? = Some(DockState::Revealed(dock_edge.clone()));
+    if let Err(error) = window.set_position(revealed) {
+        if let Ok(mut saved_state) = state.0.dock_state.lock() {
+            *saved_state = Some(DockState::Docked(dock_edge));
+        }
+        return Err(error.to_string());
+    }
+    persist_current_window_position(&app, true);
+    Ok(true)
+}
+
+#[tauri::command]
+fn redock_main_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<bool, String> {
+    let Some(state) = app.try_state::<WindowPositionState>() else {
+        return Ok(false);
+    };
+    let dock_state = state
+        .0
+        .dock_state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone();
+    let Some(DockState::Revealed(dock_edge)) = dock_state else {
+        return Ok(false);
+    };
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window is unavailable".to_string())?;
+    let (area_position, area_size, scale_factor) = monitor_work_area(&window)?;
+    let position = window.outer_position().map_err(|error| error.to_string())?;
+    let size = window.outer_size().map_err(|error| error.to_string())?;
+    let area_right = area_position.x + area_size.width as i32;
+    let area_bottom = area_position.y + area_size.height as i32;
+    let peek = (14.0 * scale_factor).round() as i32;
+    let docked = match dock_edge {
+        DockEdge::Left => {
+            PhysicalPosition::new(area_position.x - size.width as i32 / 2 + peek, position.y)
+        }
+        DockEdge::Right => {
+            PhysicalPosition::new(area_right - size.width as i32 / 2 - peek, position.y)
+        }
+        DockEdge::Top => {
+            PhysicalPosition::new(position.x, area_position.y - size.height as i32 / 2 + peek)
+        }
+        DockEdge::Bottom => {
+            PhysicalPosition::new(position.x, area_bottom - size.height as i32 / 2 - peek)
+        }
+    };
+    window
+        .set_position(docked)
+        .map_err(|error| error.to_string())?;
+    *state
+        .0
+        .dock_state
+        .lock()
+        .map_err(|error| error.to_string())? = Some(DockState::Docked(dock_edge));
+    persist_current_window_position(&app, true);
+    Ok(true)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1231,10 +1522,13 @@ pub fn run() {
             app.manage(reminder_state);
             start_reminder_scheduler(app.handle());
             let position_state = window_position_file(app.handle()).ok().map(|path| {
+                let dock_state =
+                    read_saved_window_position(&path).and_then(|saved| saved.docked_edge);
                 Arc::new(WindowPositionPersistence {
                     path,
                     latest: Mutex::new(None),
                     last_saved: Mutex::new(None),
+                    dock_state: Mutex::new(dock_state.map(DockState::Docked)),
                 })
             });
             if let Some(position_state) = position_state {
@@ -1252,6 +1546,7 @@ pub fn run() {
                                 SavedWindowPosition {
                                     x: position.x,
                                     y: position.y,
+                                    docked_edge: None,
                                 },
                                 false,
                             );
@@ -1353,6 +1648,9 @@ pub fn run() {
             install_downloaded_update,
             position_main_window,
             resize_main_window,
+            dock_main_window_to_edge,
+            reveal_main_window,
+            redock_main_window,
             list_custom_models,
             read_custom_model,
             delete_custom_model,

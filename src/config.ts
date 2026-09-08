@@ -1,6 +1,6 @@
 import type { DashboardLocale, MascotSettings } from "./types";
 const STORAGE_KEY = "nightlight-mascot-settings";
-const SETTINGS_SCHEMA_VERSION = 2;
+const SETTINGS_SCHEMA_VERSION = 3;
 const UI_STORAGE_KEY = "desktop-mascot-dashboard-preferences";
 const AUTHOR_DATA_CACHE_KEY = "desktop-mascot-author-data";
 const AUTHOR_DATA_URL = "https://raw.githubusercontent.com/jingluoguo/jingluo_web/master/author.json";
@@ -11,6 +11,7 @@ const DEFAULT_SETTINGS: MascotSettings = {
   viewMode: "3d",
   outlineVisible: true,
   followCursor: true,
+  edgeDock: false,
   bodyColor: "#bdeef2",
   outlineColor: "#23434d",
   accentColor: "#a9d9ff",
@@ -49,6 +50,8 @@ const uiText = {
     viewMode: "显示模式",
     followCursor: "鼠标跟随",
     followHint: "失去焦点时仍会感知系统鼠标位置",
+    edgeDock: "边缘吸附",
+    edgeDockHint: "松开拖拽后靠近屏幕边缘时自动收起；点击或提醒会自动弹出",
     outline: "模型轮廓",
     outlineHint: "显示角色外侧描边",
     bodyColor: "主体",
@@ -96,6 +99,8 @@ const uiText = {
     cancelReminder: "取消编辑",
     noReminders: "还没有定时任务",
     reminderEnabled: "已启用",
+    strongReminder: "强提醒",
+    strongReminderHint: "保持弹出，直到点击宠物后再自动归位",
     nextReminder: "下次提醒",
     deleteReminder: "删除",
     reminderSaved: "提醒已保存",
@@ -185,6 +190,8 @@ const uiText = {
     viewMode: "View mode",
     followCursor: "Follow cursor",
     followHint: "Tracks the system cursor even when unfocused",
+    edgeDock: "Edge dock",
+    edgeDockHint: "Dock near a screen edge after dragging; click or reminders reveal it automatically",
     outline: "Character outline",
     outlineHint: "Show the outline around the character",
     bodyColor: "Body",
@@ -232,6 +239,8 @@ const uiText = {
     cancelReminder: "Cancel edit",
     noReminders: "No scheduled tasks yet",
     reminderEnabled: "Enabled",
+    strongReminder: "Persistent reminder",
+    strongReminderHint: "Stay revealed until the mascot is clicked, then dock automatically",
     nextReminder: "Next reminder",
     deleteReminder: "Delete",
     reminderSaved: "Reminder saved",

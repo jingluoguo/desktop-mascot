@@ -16,6 +16,9 @@ const MODEL_HIT_SELECTOR = [
   ".pet-host .lively-mascot svg",
 ].join(", ");
 
+const revealDockedPet = () => invoke<boolean>("reveal_main_window").catch(() => false);
+const EDGE_DOCK_RETURN_DELAY = 6000;
+
 export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { modelRegistryVersion: number; onModelRegistryReload: () => Promise<void> }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const mascotRef = useRef<MascotInstance | null>(null);
@@ -33,7 +36,11 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   const dragFrameRef = useRef<number | null>(null);
   const dragCursorPollRef = useRef<number | null>(null);
   const dragCursorPollBusyRef = useRef(false);
+  const dragPositionWriteRef = useRef<Promise<void> | null>(null);
+  const edgeDockReturnTimerRef = useRef<number | null>(null);
+  const dragSequenceRef = useRef(0);
   const dragStateRef = useRef<{
+    sequence: number;
     pointerId: number;
     target: HTMLElement;
     startCursorX: number;
@@ -42,6 +49,7 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
     latestCursorY: number;
     windowPosition: PhysicalPosition | null;
     pending: boolean;
+    moved: boolean;
   } | null>(null);
   const [settings, setSettings] = useState(loadSettings);
   const settingsRef = useRef(settings);
@@ -61,13 +69,126 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
     void checkForUpdate();
   }, []);
 
+  const scheduleEdgeDockReturn = () => {
+    if (!settingsRef.current.edgeDock) return;
+    if (edgeDockReturnTimerRef.current !== null) window.clearTimeout(edgeDockReturnTimerRef.current);
+    edgeDockReturnTimerRef.current = window.setTimeout(() => {
+      void invoke<boolean>("redock_main_window").catch(() => undefined);
+      edgeDockReturnTimerRef.current = null;
+    }, EDGE_DOCK_RETURN_DELAY);
+  };
+
   const triggerHappy = () => {
-    if (happyResetTimerRef.current !== null) window.clearTimeout(happyResetTimerRef.current);
-    setActiveEmotion("10");
-    happyResetTimerRef.current = window.setTimeout(() => {
-      setActiveEmotion("02");
-      happyResetTimerRef.current = null;
-    }, 2200);
+    const showHappy = () => {
+      if (happyResetTimerRef.current !== null) window.clearTimeout(happyResetTimerRef.current);
+      setActiveEmotion("10");
+      happyResetTimerRef.current = window.setTimeout(() => {
+        setActiveEmotion("02");
+        happyResetTimerRef.current = null;
+      }, 2200);
+    };
+    void revealDockedPet().then(showHappy);
+    scheduleEdgeDockReturn();
+  };
+
+  const finishDragging = (dragState: NonNullable<typeof dragStateRef.current>, pendingWrite: Promise<void> | null) => {
+    if (!settingsRef.current.edgeDock) return;
+    void (pendingWrite ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(async () => {
+        const cursor = await cursorPosition().catch(() => new PhysicalPosition(dragState.latestCursorX, dragState.latestCursorY));
+        if (!dragState.windowPosition || dragStateRef.current) return null;
+        const x = dragState.windowPosition.x + Math.round(cursor.x - dragState.startCursorX);
+        const y = dragState.windowPosition.y + Math.round(cursor.y - dragState.startCursorY);
+        // Pass this exact physical drop position to the native snap command.
+        // Reading outerPosition there can return the previous frame on macOS.
+        await getCurrentWindow().setPosition(new PhysicalPosition(x, y)).catch(() => undefined);
+        return { x, y };
+      })
+      .then((position) => position && invoke<boolean>("dock_main_window_to_edge", {
+        windowX: position.x,
+        windowY: position.y,
+      }))
+      .catch(() => undefined);
+  };
+
+  const stopDragging = (event: PointerEvent) => {
+    const dragState = dragStateRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
+    const releaseCursorX = Math.round(event.screenX * window.devicePixelRatio);
+    const releaseCursorY = Math.round(event.screenY * window.devicePixelRatio);
+    dragState.latestCursorX = releaseCursorX;
+    dragState.latestCursorY = releaseCursorY;
+    dragState.moved ||= releaseCursorX !== dragState.startCursorX || releaseCursorY !== dragState.startCursorY;
+    dragStateRef.current = null;
+    dragSequenceRef.current += 1;
+    if (dragCursorPollRef.current !== null) {
+      window.clearInterval(dragCursorPollRef.current);
+      dragCursorPollRef.current = null;
+    }
+    if (dragFrameRef.current !== null) {
+      window.cancelAnimationFrame(dragFrameRef.current);
+      dragFrameRef.current = null;
+    }
+    if (dragState.target.hasPointerCapture(event.pointerId)) dragState.target.releasePointerCapture(event.pointerId);
+    const pendingWrite = dragPositionWriteRef.current;
+    if (dragState.moved) finishDragging(dragState, pendingWrite);
+    else if (event.type === "pointerup") triggerHappy();
+  };
+
+  const startDragging = (event: PointerEvent) => {
+    if (event.button !== 0) return;
+    const target = event.currentTarget as HTMLElement;
+    if (edgeDockReturnTimerRef.current !== null) {
+      window.clearTimeout(edgeDockReturnTimerRef.current);
+      edgeDockReturnTimerRef.current = null;
+    }
+    try {
+      target.setPointerCapture(event.pointerId);
+    } catch {
+      return;
+    }
+    const dragSequence = dragSequenceRef.current + 1;
+    dragSequenceRef.current = dragSequence;
+    dragStateRef.current = {
+      sequence: dragSequence,
+      pointerId: event.pointerId,
+      target,
+      startCursorX: event.screenX * window.devicePixelRatio,
+      startCursorY: event.screenY * window.devicePixelRatio,
+      latestCursorX: event.screenX * window.devicePixelRatio,
+      latestCursorY: event.screenY * window.devicePixelRatio,
+      windowPosition: null,
+      pending: false,
+      moved: false,
+    };
+    const appWindow = getCurrentWindow();
+    void Promise.all([appWindow.outerPosition(), cursorPosition()]).then(([windowPosition, startCursor]) => {
+      const dragState = dragStateRef.current;
+      if (!dragState || dragState.sequence !== dragSequence) return;
+      dragState.windowPosition = windowPosition;
+      dragState.startCursorX = startCursor.x;
+      dragState.startCursorY = startCursor.y;
+      dragState.latestCursorX = startCursor.x;
+      dragState.latestCursorY = startCursor.y;
+      if (dragCursorPollRef.current !== null) window.clearInterval(dragCursorPollRef.current);
+      dragCursorPollRef.current = window.setInterval(() => {
+        const activeDrag = dragStateRef.current;
+        if (!activeDrag || activeDrag.sequence !== dragSequence || dragCursorPollBusyRef.current) return;
+        dragCursorPollBusyRef.current = true;
+        void cursorPosition().then((position) => {
+          const currentDrag = dragStateRef.current;
+          if (!currentDrag || currentDrag.sequence !== dragSequence) return;
+          currentDrag.latestCursorX = position.x;
+          currentDrag.latestCursorY = position.y;
+          currentDrag.moved ||= position.x !== currentDrag.startCursorX || position.y !== currentDrag.startCursorY;
+          queueDraggedWindowPosition();
+        }).catch(() => undefined).finally(() => {
+          dragCursorPollBusyRef.current = false;
+        });
+      }, 16);
+      queueDraggedWindowPosition();
+    }).catch(() => undefined);
   };
 
   const queueDraggedWindowPosition = () => {
@@ -80,76 +201,19 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
       activeDrag.pending = true;
       const cursorX = activeDrag.latestCursorX;
       const cursorY = activeDrag.latestCursorY;
+      activeDrag.moved ||= cursorX !== activeDrag.startCursorX || cursorY !== activeDrag.startCursorY;
       const x = activeDrag.windowPosition.x + Math.round(cursorX - activeDrag.startCursorX);
       const y = activeDrag.windowPosition.y + Math.round(cursorY - activeDrag.startCursorY);
-      void getCurrentWindow().setPosition(new PhysicalPosition(x, y)).catch(() => undefined).finally(() => {
+      const positionWrite = getCurrentWindow().setPosition(new PhysicalPosition(x, y));
+      dragPositionWriteRef.current = positionWrite;
+      void positionWrite.catch(() => undefined).finally(() => {
+        if (dragPositionWriteRef.current === positionWrite) dragPositionWriteRef.current = null;
         const currentDrag = dragStateRef.current;
-        if (!currentDrag || currentDrag.pointerId !== activeDrag.pointerId) return;
+        if (!currentDrag || currentDrag.sequence !== activeDrag.sequence) return;
         currentDrag.pending = false;
         if (currentDrag.latestCursorX !== cursorX || currentDrag.latestCursorY !== cursorY) queueDraggedWindowPosition();
       });
     });
-  };
-
-  const stopDragging = (event: PointerEvent) => {
-    const dragState = dragStateRef.current;
-    if (!dragState || dragState.pointerId !== event.pointerId) return;
-    dragStateRef.current = null;
-    if (dragCursorPollRef.current !== null) {
-      window.clearInterval(dragCursorPollRef.current);
-      dragCursorPollRef.current = null;
-    }
-    if (dragFrameRef.current !== null) {
-      window.cancelAnimationFrame(dragFrameRef.current);
-      dragFrameRef.current = null;
-    }
-    if (dragState.target.hasPointerCapture(event.pointerId)) dragState.target.releasePointerCapture(event.pointerId);
-  };
-
-  const startDragging = (event: PointerEvent) => {
-    if (event.button !== 0) return;
-    const target = event.currentTarget as HTMLElement;
-    try {
-      target.setPointerCapture(event.pointerId);
-    } catch {
-      return;
-    }
-    dragStateRef.current = {
-      pointerId: event.pointerId,
-      target,
-      startCursorX: event.screenX * window.devicePixelRatio,
-      startCursorY: event.screenY * window.devicePixelRatio,
-      latestCursorX: event.screenX * window.devicePixelRatio,
-      latestCursorY: event.screenY * window.devicePixelRatio,
-      windowPosition: null,
-      pending: false,
-    };
-    const appWindow = getCurrentWindow();
-    void Promise.all([appWindow.outerPosition(), cursorPosition()]).then(([windowPosition, startCursor]) => {
-      const dragState = dragStateRef.current;
-      if (!dragState || dragState.pointerId !== event.pointerId) return;
-      dragState.windowPosition = windowPosition;
-      dragState.startCursorX = startCursor.x;
-      dragState.startCursorY = startCursor.y;
-      dragState.latestCursorX = startCursor.x;
-      dragState.latestCursorY = startCursor.y;
-      if (dragCursorPollRef.current !== null) window.clearInterval(dragCursorPollRef.current);
-      dragCursorPollRef.current = window.setInterval(() => {
-        const activeDrag = dragStateRef.current;
-        if (!activeDrag || activeDrag.pointerId !== event.pointerId || dragCursorPollBusyRef.current) return;
-        dragCursorPollBusyRef.current = true;
-        void cursorPosition().then((position) => {
-          const currentDrag = dragStateRef.current;
-          if (!currentDrag || currentDrag.pointerId !== event.pointerId) return;
-          currentDrag.latestCursorX = position.x;
-          currentDrag.latestCursorY = position.y;
-          queueDraggedWindowPosition();
-        }).catch(() => undefined).finally(() => {
-          dragCursorPollBusyRef.current = false;
-        });
-      }, 16);
-      queueDraggedWindowPosition();
-    }).catch(() => undefined);
   };
 
   useEffect(() => {
@@ -171,14 +235,17 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
         }),
         listen("custom-models-updated", () => { void onModelRegistryReload(); }),
         listen<Reminder>("reminder-fired", ({ payload }) => {
-          if (reminderResetTimerRef.current !== null) window.clearTimeout(reminderResetTimerRef.current);
-          setActiveReminderTitle(payload.title);
-          setActiveEmotion(payload.emotion || settingsRef.current.emotion);
-          reminderResetTimerRef.current = window.setTimeout(() => {
-            setActiveEmotion(settingsRef.current.emotion);
-            setActiveReminderTitle(null);
-            reminderResetTimerRef.current = null;
-          }, 6000);
+          void revealDockedPet().then(() => {
+            if (reminderResetTimerRef.current !== null) window.clearTimeout(reminderResetTimerRef.current);
+            setActiveReminderTitle(payload.title);
+            setActiveEmotion(payload.emotion || settingsRef.current.emotion);
+            reminderResetTimerRef.current = window.setTimeout(() => {
+              setActiveEmotion(settingsRef.current.emotion);
+              setActiveReminderTitle(null);
+              reminderResetTimerRef.current = null;
+            }, 6000);
+            if (!payload.systemNotification) scheduleEdgeDockReturn();
+          });
         }),
       ]);
       if (disposed) {
@@ -199,6 +266,10 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   }, []);
 
   useEffect(() => {
+    if (!settings.edgeDock) void revealDockedPet();
+  }, [settings.edgeDock]);
+
+  useEffect(() => {
     if (!hostRef.current) return;
     const livelyMascot = getLivelyMascot();
     if (!livelyMascot) return;
@@ -217,7 +288,6 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
       outlineVisible: settings.outlineVisible,
       followCursor: settings.followCursor,
       hopInterval: null,
-      onClick: triggerHappy,
     });
     mascot.setFaceVariant(settings.faceVariant);
     Object.entries(livelyMascot.models[settings.character]?.accessories ?? {}).forEach(([id, definition]) => {
@@ -378,11 +448,16 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
     setCursorEventsIgnored(true);
     const handlePointerMove = (event: PointerEvent) => {
       if (!event.isTrusted) return;
+      if (dragStateRef.current) return;
       const target = event.target instanceof Element ? event.target : null;
       setCursorEventsIgnored(!target?.closest(MODEL_HIT_SELECTOR));
     };
     const hitTestCursor = async () => {
       if (hitTestBusy || disposed) return;
+      if (dragStateRef.current) {
+        setCursorEventsIgnored(false);
+        return;
+      }
       hitTestBusy = true;
       try {
         const cursor = await cursorPosition();
@@ -436,6 +511,7 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   useEffect(() => () => {
     if (happyResetTimerRef.current !== null) window.clearTimeout(happyResetTimerRef.current);
     if (reminderResetTimerRef.current !== null) window.clearTimeout(reminderResetTimerRef.current);
+    if (edgeDockReturnTimerRef.current !== null) window.clearTimeout(edgeDockReturnTimerRef.current);
     if (scaleFrameRef.current !== null) window.cancelAnimationFrame(scaleFrameRef.current);
     if (dragFrameRef.current !== null) window.cancelAnimationFrame(dragFrameRef.current);
     if (dragCursorPollRef.current !== null) window.clearInterval(dragCursorPollRef.current);

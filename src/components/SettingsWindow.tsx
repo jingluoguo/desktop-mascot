@@ -517,6 +517,7 @@ export function SettingsWindow() {
             <section className="settings-group">
               <GroupHeading eyebrow="POINTER" title={text.behavior} />
               <ToggleRow label={text.followCursor} description={text.followHint} checked={settings.followCursor} onChange={(checked) => update("followCursor", checked)} />
+              <ToggleRow label={text.edgeDock} description={text.edgeDockHint} checked={settings.edgeDock} onChange={(checked) => update("edgeDock", checked)} />
             </section>
             <section className="settings-group">
               <GroupHeading eyebrow="SHORTCUTS" title={text.recordShortcut} />
@@ -569,6 +570,7 @@ export function SettingsWindow() {
               {editingReminder.schedule === "interval" && <label className="reminder-field"><span>{text.intervalMinutes}</span><input type="number" min="1" max="10080" value={editingReminder.intervalMinutes ?? 30} onChange={(event) => updateReminderDraft("intervalMinutes", Math.max(1, Number(event.target.value) || 1))} /></label>}
               <label className="reminder-field"><span>{text.reminderEmotion}</span><select value={editingReminder.emotion} onChange={(event) => updateReminderDraft("emotion", event.target.value)}>{Object.entries(livelyMascot?.emotions ?? {}).map(([id, emotion]) => <option key={id} value={id}>{emotion.desc || emotion.name || id}</option>)}</select></label>
               <ToggleRow label={text.reminderEnabled} checked={editingReminder.enabled} onChange={(checked) => updateReminderDraft("enabled", checked)} />
+              <ToggleRow label={text.strongReminder} description={text.strongReminderHint} checked={editingReminder.systemNotification} onChange={(checked) => updateReminderDraft("systemNotification", checked)} />
               <div className="reminder-editor-actions"><button type="button" className="shortcut-capture" disabled={!editingReminder.title.trim()} onClick={() => void persistReminder()}>{text.saveReminder}</button><button type="button" className="autostart-refresh" onClick={() => setEditingReminder(null)}>{text.cancelReminder}</button></div>
             </aside></div>}
           </div>}

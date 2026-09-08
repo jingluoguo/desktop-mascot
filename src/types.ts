@@ -6,6 +6,7 @@ type MascotSettings = {
   viewMode: ViewMode;
   outlineVisible: boolean;
   followCursor: boolean;
+  edgeDock: boolean;
   bodyColor: string;
   outlineColor: string;
   accentColor: string;
