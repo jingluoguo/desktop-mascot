@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
+use tauri::WindowEvent;
 use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -94,6 +95,114 @@ struct ReminderManagerState {
     reminders: Mutex<Vec<Reminder>>,
     timer: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     data_path: Mutex<Option<PathBuf>>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct SavedWindowPosition {
+    x: i32,
+    y: i32,
+}
+
+struct WindowPositionPersistence {
+    path: PathBuf,
+    latest: Mutex<Option<SavedWindowPosition>>,
+    last_saved: Mutex<Option<Instant>>,
+}
+
+struct WindowPositionState(Arc<WindowPositionPersistence>);
+
+fn window_position_file<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<PathBuf, String> {
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    Ok(directory.join("window-position.json"))
+}
+
+fn read_saved_window_position(path: &Path) -> Option<SavedWindowPosition> {
+    serde_json::from_str(&fs::read_to_string(path).ok()?).ok()
+}
+
+fn write_saved_window_position(path: &Path, position: &SavedWindowPosition) {
+    if let Ok(contents) = serde_json::to_string(position) {
+        let _ = fs::write(path, contents);
+    }
+}
+
+fn persist_window_position(
+    state: &WindowPositionPersistence,
+    position: SavedWindowPosition,
+    force: bool,
+) {
+    if let Ok(mut latest) = state.latest.lock() {
+        *latest = Some(position.clone());
+    }
+    let should_write = force
+        || state
+            .last_saved
+            .lock()
+            .map(|last| last.map_or(true, |time| time.elapsed() >= StdDuration::from_millis(250)))
+            .unwrap_or(false);
+    if should_write {
+        write_saved_window_position(&state.path, &position);
+        if let Ok(mut last) = state.last_saved.lock() {
+            *last = Some(Instant::now());
+        }
+    }
+}
+
+fn persist_current_window_position<R: tauri::Runtime>(app: &tauri::AppHandle<R>, force: bool) {
+    let Some(state) = app.try_state::<WindowPositionState>() else {
+        return;
+    };
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    if let Ok(position) = window.outer_position() {
+        persist_window_position(
+            &state.0,
+            SavedWindowPosition {
+                x: position.x,
+                y: position.y,
+            },
+            force,
+        );
+    } else if force {
+        if let Ok(latest) = state.0.latest.lock() {
+            if let Some(position) = latest.clone() {
+                write_saved_window_position(&state.0.path, &position);
+            }
+        }
+    }
+}
+
+fn restore_window_position<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    path: &Path,
+) -> bool {
+    let Some(saved) = read_saved_window_position(path) else {
+        return false;
+    };
+    let Ok(size) = window.outer_size() else {
+        return false;
+    };
+    let Ok(monitors) = window.available_monitors() else {
+        return false;
+    };
+    let visible = monitors.iter().any(|monitor| {
+        let area = monitor.work_area();
+        let right = saved.x + size.width as i32;
+        let bottom = saved.y + size.height as i32;
+        saved.x < area.position.x + area.size.width as i32
+            && right > area.position.x
+            && saved.y < area.position.y + area.size.height as i32
+            && bottom > area.position.y
+    });
+    visible
+        && window
+            .set_position(PhysicalPosition::new(saved.x, saved.y))
+            .is_ok()
 }
 
 fn now_epoch() -> i64 {
@@ -956,6 +1065,7 @@ fn greet(name: &str) -> String {
 
 #[tauri::command]
 fn quit_app<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    persist_current_window_position(&app, true);
     app.exit(0);
 }
 
@@ -1120,6 +1230,44 @@ pub fn run() {
             }
             app.manage(reminder_state);
             start_reminder_scheduler(app.handle());
+            let position_state = window_position_file(app.handle()).ok().map(|path| {
+                Arc::new(WindowPositionPersistence {
+                    path,
+                    latest: Mutex::new(None),
+                    last_saved: Mutex::new(None),
+                })
+            });
+            if let Some(position_state) = position_state {
+                app.manage(WindowPositionState(Arc::clone(&position_state)));
+                if let Some(window) = app.get_webview_window("main") {
+                    let restored = restore_window_position(&window, &position_state.path);
+                    if !restored {
+                        let _ = position_main_window(app.handle().clone());
+                    }
+                    let persistence = Arc::clone(&position_state);
+                    window.on_window_event(move |event| {
+                        if let WindowEvent::Moved(position) = event {
+                            persist_window_position(
+                                &persistence,
+                                SavedWindowPosition {
+                                    x: position.x,
+                                    y: position.y,
+                                },
+                                false,
+                            );
+                        }
+                        if matches!(event, WindowEvent::Destroyed) {
+                            if let Ok(latest) = persistence.latest.lock() {
+                                if let Some(position) = latest.clone() {
+                                    write_saved_window_position(&persistence.path, &position);
+                                }
+                            }
+                        }
+                    });
+                }
+            } else {
+                let _ = position_main_window(app.handle().clone());
+            }
             // Request login-item access once; later changes are controlled from the dashboard.
             request_autostart_once(app.handle());
             // Accessory apps stay available from the menu bar without a Dock icon (macOS only).
@@ -1129,7 +1277,6 @@ pub fn run() {
                 .set_activation_policy(tauri::ActivationPolicy::Accessory);
             #[cfg(not(target_os = "macos"))]
             let _ = app.handle();
-            let _ = position_main_window(app.handle().clone());
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_focusable(true);
                 // Login-item launches can inherit a hidden/minimized state from the
@@ -1178,7 +1325,10 @@ pub fn run() {
                             let _ = set_main_window_visibility(app, !is_visible);
                         }
                     }
-                    "quit" => app.exit(0),
+                    "quit" => {
+                        persist_current_window_position(app, true);
+                        app.exit(0);
+                    }
                     _ => {}
                 });
 
