@@ -1209,17 +1209,91 @@ fn resize_main_window<R: tauri::Runtime>(
         (width * scale_factor).round().max(1.0) as u32,
         (height * scale_factor).round().max(1.0) as u32,
     );
-    let delta_x = (next_size.width as i32 - old_size.width as i32) / 2;
-    let delta_y = (next_size.height as i32 - old_size.height as i32) / 2;
+    let dock_state = app.try_state::<WindowPositionState>().and_then(|state| {
+        state
+            .0
+            .dock_state
+            .lock()
+            .ok()
+            .and_then(|dock_state| dock_state.clone())
+    });
+    let was_docked = dock_state.is_some();
     window
         .set_size(next_size)
         .map_err(|error| error.to_string())?;
+    // Keep an attached window on its edge when the renderer changes its native canvas size.
+    let next_position = if let Some(dock_state) = dock_state {
+        let (area_position, area_size, _) = monitor_work_area(&window)?;
+        let area_right = area_position.x + area_size.width as i32;
+        let area_bottom = area_position.y + area_size.height as i32;
+        let width = next_size.width as i32;
+        let height = next_size.height as i32;
+        let clamp_x = |x: i32| x.clamp(area_position.x, area_right - width);
+        let clamp_y = |y: i32| y.clamp(area_position.y, area_bottom - height);
+        let side_peek = (width as f64 * SIDE_DOCK_VISIBLE_RATIO).round() as i32;
+        let peek = (14.0 * scale_factor).round() as i32;
+        match dock_state {
+            DockState::Docked(edge) => match edge {
+                DockEdge::Left => PhysicalPosition::new(
+                    area_position.x - width + side_peek,
+                    clamp_y(old_position.y),
+                ),
+                DockEdge::Right => {
+                    PhysicalPosition::new(area_right - side_peek, clamp_y(old_position.y))
+                }
+                DockEdge::Top => PhysicalPosition::new(
+                    clamp_x(old_position.x),
+                    area_position.y - height / 2 + peek,
+                ),
+                DockEdge::Bottom => {
+                    PhysicalPosition::new(clamp_x(old_position.x), area_bottom - height / 2 - peek)
+                }
+            },
+            DockState::Revealed(edge) => match edge {
+                DockEdge::Left => PhysicalPosition::new(area_position.x, clamp_y(old_position.y)),
+                DockEdge::Right => {
+                    PhysicalPosition::new(area_right - width, clamp_y(old_position.y))
+                }
+                DockEdge::Top => PhysicalPosition::new(clamp_x(old_position.x), area_position.y),
+                DockEdge::Bottom => {
+                    PhysicalPosition::new(clamp_x(old_position.x), area_bottom - height)
+                }
+            },
+        }
+    } else {
+        let delta_x = (next_size.width as i32 - old_size.width as i32) / 2;
+        let delta_y = (next_size.height as i32 - old_size.height as i32) / 2;
+        PhysicalPosition::new(old_position.x - delta_x, old_position.y - delta_y)
+    };
     window
-        .set_position(PhysicalPosition::new(
-            old_position.x - delta_x,
-            old_position.y - delta_y,
-        ))
-        .map_err(|error| error.to_string())
+        .set_position(next_position)
+        .map_err(|error| error.to_string())?;
+    if was_docked {
+        persist_current_window_position(&app, true);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn clamp_context_menu_position<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<PhysicalPosition<i32>, String> {
+    let monitor = app
+        .monitor_from_point(x as f64, y as f64)
+        .map_err(|error| error.to_string())?
+        .or_else(|| app.primary_monitor().ok().flatten())
+        .ok_or_else(|| "no monitor is available".to_string())?;
+    let area = monitor.work_area();
+    let max_x = (area.position.x + area.size.width as i32 - width as i32).max(area.position.x);
+    let max_y = (area.position.y + area.size.height as i32 - height as i32).max(area.position.y);
+    Ok(PhysicalPosition::new(
+        x.clamp(area.position.x, max_x),
+        y.clamp(area.position.y, max_y),
+    ))
 }
 
 fn monitor_work_area<R: tauri::Runtime>(
@@ -1693,6 +1767,7 @@ pub fn run() {
             install_downloaded_update,
             position_main_window,
             resize_main_window,
+            clamp_context_menu_position,
             dock_main_window_to_edge,
             reveal_main_window,
             redock_main_window,

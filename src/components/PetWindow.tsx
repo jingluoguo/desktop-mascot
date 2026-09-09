@@ -20,6 +20,8 @@ const revealDockedPet = () => invoke<boolean>("reveal_main_window").catch(() => 
 const EDGE_DOCK_RETURN_DELAY = 6000;
 const DRAG_EMOTION_REPEAT_DELAY = 1800;
 const DRAG_MOVEMENT_THRESHOLD = 4;
+const CONTEXT_MENU_WIDTH = 220;
+const CONTEXT_MENU_HEIGHT = 236;
 
 export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { modelRegistryVersion: number; onModelRegistryReload: () => Promise<void> }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -699,30 +701,37 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
 }
 
 const openContextMenuWindow = async (x: number, y: number) => {
-  const width = 220;
-  const height = 236;
   let menuWindow = await WebviewWindow.getByLabel("context-menu");
   if (!menuWindow) {
     menuWindow = new WebviewWindow("context-menu", {
       url: "/?view=context-menu",
       title: "",
-      width,
-      height,
-      x,
-      y,
+      width: CONTEXT_MENU_WIDTH,
+      height: CONTEXT_MENU_HEIGHT,
+      x: 0,
+      y: 0,
       resizable: false,
       decorations: false,
       transparent: true,
       alwaysOnTop: true,
       skipTaskbar: true,
       shadow: false,
+      visible: false,
     });
     await new Promise<void>((resolve) => {
       menuWindow?.once("tauri://created", () => resolve());
       menuWindow?.once("tauri://error", () => resolve());
     });
   }
-  await menuWindow.setPosition(new PhysicalPosition(Math.round(x), Math.round(y))).catch(() => undefined);
+  const size = await menuWindow.outerSize().catch(() => ({ width: CONTEXT_MENU_WIDTH, height: CONTEXT_MENU_HEIGHT }));
+  const position = await invoke<{ x: number; y: number }>("clamp_context_menu_position", {
+    x: Math.round(x),
+    y: Math.round(y),
+    width: size.width,
+    height: size.height,
+  }).then(({ x: positionX, y: positionY }) => new PhysicalPosition(positionX, positionY))
+    .catch(() => new PhysicalPosition(Math.round(x), Math.round(y)));
+  await menuWindow.setPosition(position).catch(() => undefined);
   await menuWindow.show().catch(() => undefined);
   await menuWindow.setFocus().catch(() => undefined);
 };
