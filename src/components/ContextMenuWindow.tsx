@@ -2,8 +2,20 @@ import { useEffect, useState } from "react";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { shortcutDisplay } from "../lib/settings";
+
+type ContextMenuState = {
+  hasAccessories: boolean;
+  globalShortcut: string;
+  dashboardShortcut: string;
+};
+
 export function ContextMenuWindow() {
   const [hasAccessories, setHasAccessories] = useState(false);
+  const [shortcuts, setShortcuts] = useState<Pick<ContextMenuState, "globalShortcut" | "dashboardShortcut">>({
+    globalShortcut: "",
+    dashboardShortcut: "",
+  });
   const close = async () => {
     await getCurrentWindow().close().catch(() => undefined);
   };
@@ -24,7 +36,10 @@ export function ContextMenuWindow() {
   }, []);
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    void listen<{ hasAccessories: boolean }>("mascot-context-menu-state", ({ payload }) => setHasAccessories(payload.hasAccessories))
+    void listen<ContextMenuState>("mascot-context-menu-state", ({ payload }) => {
+      setHasAccessories(payload.hasAccessories);
+      setShortcuts({ globalShortcut: payload.globalShortcut, dashboardShortcut: payload.dashboardShortcut });
+    })
       .then((dispose) => {
         unlisten = dispose;
         void emitTo("main", "mascot-context-menu-request");
@@ -46,9 +61,9 @@ export function ContextMenuWindow() {
       {hasAccessories && <button type="button" role="menuitem" className="quick-accessory" onClick={async () => { await emitTo("main", "mascot-toggle-accessory"); await close(); }}><span>切换配件</span><small>⌥</small></button>}
     </div>
     <div className="menu-actions">
-      <button type="button" role="menuitem" onClick={async () => { await emitTo("main", "open-settings"); await close(); }}><span>仪表盘</span><small>⌘</small></button>
-      <button type="button" role="menuitem" onClick={async () => { await invoke("hide_main_window").catch(() => undefined); await close(); }}><span>隐藏</span><small>H</small></button>
-      <button type="button" role="menuitem" className="menu-danger" onClick={() => { void invoke("quit_app").catch(() => undefined); }}><span>退出</span><small>Q</small></button>
+      <button type="button" role="menuitem" onClick={async () => { await emitTo("main", "open-settings"); await close(); }}><span>仪表盘</span>{shortcuts.dashboardShortcut && <small>{shortcutDisplay(shortcuts.dashboardShortcut)}</small>}</button>
+      <button type="button" role="menuitem" onClick={async () => { await invoke("hide_main_window").catch(() => undefined); await close(); }}><span>隐藏</span>{shortcuts.globalShortcut && <small>{shortcutDisplay(shortcuts.globalShortcut)}</small>}</button>
+      <button type="button" role="menuitem" className="menu-danger" onClick={() => { void invoke("quit_app").catch(() => undefined); }}><span>退出</span></button>
     </div>
   </div></main>;
 }

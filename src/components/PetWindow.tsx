@@ -368,7 +368,11 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
         }),
         listen("mascot-context-menu-request", () => {
           const hasAccessories = Object.keys(mascotRef.current?.getAccessories() ?? {}).length > 0;
-          void emitTo("context-menu", "mascot-context-menu-state", { hasAccessories });
+          void emitTo("context-menu", "mascot-context-menu-state", {
+            hasAccessories,
+            globalShortcut: settingsRef.current.globalShortcut,
+            dashboardShortcut: settingsRef.current.dashboardShortcut,
+          });
         }),
         listen<Reminder>("reminder-fired", ({ payload }) => {
           const reminderSequence = reminderSequenceRef.current + 1;
