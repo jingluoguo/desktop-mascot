@@ -27,6 +27,8 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   const interactionResetTimerRef = useRef<number | null>(null);
   const clickTimerRef = useRef<number | null>(null);
   const reminderResetTimerRef = useRef<number | null>(null);
+  const reminderActiveRef = useRef(false);
+  const reminderSequenceRef = useRef(0);
   const scaleFrameRef = useRef<number | null>(null);
   const scaleTargetRef = useRef(1);
   const scaleValueRef = useRef(1);
@@ -97,6 +99,7 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   };
 
   const triggerInteraction = (trigger: InteractionTrigger, overrideEmotion?: string) => {
+    if (reminderActiveRef.current) return;
     const emotion = interactionEmotion(trigger, overrideEmotion);
     if (!emotion) return;
     const showReaction = () => {
@@ -142,7 +145,7 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   };
 
   const startDragEmotion = () => {
-    if (activeDragEmotionRef.current) return;
+    if (reminderActiveRef.current || activeDragEmotionRef.current) return;
     const emotion = interactionEmotion("drag");
     if (!emotion) return;
     activeDragEmotionRef.current = emotion;
@@ -366,13 +369,28 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
           void emitTo("context-menu", "mascot-context-menu-state", { hasAccessories });
         }),
         listen<Reminder>("reminder-fired", ({ payload }) => {
+          const reminderSequence = reminderSequenceRef.current + 1;
+          reminderSequenceRef.current = reminderSequence;
+          reminderActiveRef.current = true;
+          if (clickTimerRef.current !== null) {
+            window.clearTimeout(clickTimerRef.current);
+            clickTimerRef.current = null;
+          }
+          if (interactionResetTimerRef.current !== null) {
+            window.clearTimeout(interactionResetTimerRef.current);
+            interactionResetTimerRef.current = null;
+          }
+          stopDragEmotion();
           void revealDockedPet().then(() => {
+            if (reminderSequenceRef.current !== reminderSequence) return;
             if (reminderResetTimerRef.current !== null) window.clearTimeout(reminderResetTimerRef.current);
             setActiveReminderTitle(payload.title);
             setActiveEmotion(payload.emotion || settingsRef.current.emotion);
             reminderResetTimerRef.current = window.setTimeout(() => {
+              if (reminderSequenceRef.current !== reminderSequence) return;
               setActiveEmotion(settingsRef.current.emotion);
               setActiveReminderTitle(null);
+              reminderActiveRef.current = false;
               reminderResetTimerRef.current = null;
             }, 6000);
             if (!payload.systemNotification) scheduleEdgeDockReturn();
