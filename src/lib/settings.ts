@@ -19,6 +19,7 @@ const loadSettings = (): MascotSettings => {
         ? raw as Partial<MascotSettings>
         : {};
     const savedSize = Number(saved.size);
+    const savedEdgeDockThreshold = Number(saved.edgeDockThreshold);
     const size = savedSize === 260
       ? DEFAULT_SETTINGS.size
       : Number.isFinite(savedSize)
@@ -45,6 +46,9 @@ const loadSettings = (): MascotSettings => {
       outlineVisible: typeof saved.outlineVisible === "boolean" ? saved.outlineVisible : DEFAULT_SETTINGS.outlineVisible,
       followCursor: typeof saved.followCursor === "boolean" ? saved.followCursor : DEFAULT_SETTINGS.followCursor,
       edgeDock: typeof saved.edgeDock === "boolean" ? saved.edgeDock : DEFAULT_SETTINGS.edgeDock,
+      edgeDockThreshold: Number.isFinite(savedEdgeDockThreshold)
+        ? Math.min(40, Math.max(0, Math.round(savedEdgeDockThreshold)))
+        : DEFAULT_SETTINGS.edgeDockThreshold,
       bodyColor: color(saved.bodyColor, DEFAULT_SETTINGS.bodyColor),
       outlineColor: color(saved.outlineColor, DEFAULT_SETTINGS.outlineColor),
       accentColor: color(saved.accentColor, DEFAULT_SETTINGS.accentColor),

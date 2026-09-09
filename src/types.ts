@@ -7,6 +7,7 @@ type MascotSettings = {
   outlineVisible: boolean;
   followCursor: boolean;
   edgeDock: boolean;
+  edgeDockThreshold: number;
   bodyColor: string;
   outlineColor: string;
   accentColor: string;

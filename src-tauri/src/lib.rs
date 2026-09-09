@@ -112,6 +112,8 @@ enum DockState {
     Revealed(DockEdge),
 }
 
+const SIDE_DOCK_VISIBLE_RATIO: f64 = 0.55;
+
 #[derive(Clone, Serialize, Deserialize)]
 struct SavedWindowPosition {
     x: i32,
@@ -1213,6 +1215,7 @@ fn dock_main_window_to_edge<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     window_x: i32,
     window_y: i32,
+    snap_threshold: Option<i32>,
 ) -> Result<bool, String> {
     let window = app
         .get_webview_window("main")
@@ -1264,23 +1267,35 @@ fn dock_main_window_to_edge<R: tauri::Runtime>(
     let area_right = area_position.x + area_size.width as i32;
     let area_bottom = area_position.y + area_size.height as i32;
     // Use the window bounds for the snap test instead of the cursor alone.
-    // The mascot is rendered on a transparent canvas, so the pointer can be
-    // several pixels inside the window even when the visible model is already
-    // at the edge. This also makes dragging from different parts of a model
-    // behave consistently.
+    // A window that has passed an edge must remain in its snap zone; otherwise
+    // dragging a little farther than the threshold would cancel the dock.
+    // For corners, use the larger overshoot as a deterministic tie-breaker.
     let window_right = position.x.saturating_add(size.width as i32);
     let window_bottom = position.y.saturating_add(size.height as i32);
-    let distances = [
-        (position.x - area_position.x).max(0),
-        (area_right - window_right).max(0),
-        (position.y - area_position.y).max(0),
-        (area_bottom - window_bottom).max(0),
+    let edge_distances = [
+        (
+            position.x.saturating_sub(area_position.x).max(0),
+            area_position.x.saturating_sub(position.x).max(0),
+        ),
+        (
+            area_right.saturating_sub(window_right).max(0),
+            window_right.saturating_sub(area_right).max(0),
+        ),
+        (
+            position.y.saturating_sub(area_position.y).max(0),
+            area_position.y.saturating_sub(position.y).max(0),
+        ),
+        (
+            area_bottom.saturating_sub(window_bottom).max(0),
+            window_bottom.saturating_sub(area_bottom).max(0),
+        ),
     ];
-    let threshold = (48.0 * scale_factor).round() as i32;
-    let Some((edge, distance)) = distances
+    let threshold =
+        (snap_threshold.unwrap_or(20).clamp(0, 40) as f64 * scale_factor).round() as i32;
+    let Some((edge, (distance, _))) = edge_distances
         .iter()
         .enumerate()
-        .min_by_key(|(_, distance)| *distance)
+        .min_by_key(|(_, (distance, overshoot))| (*distance, std::cmp::Reverse(*overshoot)))
     else {
         return Ok(false);
     };
@@ -1299,16 +1314,20 @@ fn dock_main_window_to_edge<R: tauri::Runtime>(
         2 => DockEdge::Top,
         _ => DockEdge::Bottom,
     };
+    // Custom models can occupy only the center of a transparent canvas, so
+    // keep a little over half of a side dock visible. This still reads as a
+    // peek while ensuring there is always a usable part of the model onscreen.
+    let side_peek = (size.width as f64 * SIDE_DOCK_VISIBLE_RATIO).round() as i32;
     let peek = (14.0 * scale_factor).round() as i32;
     let docked = match edge {
         0 => PhysicalPosition::new(
-            area_position.x - size.width as i32 / 2 + peek,
+            area_position.x - size.width as i32 + side_peek,
             position
                 .y
                 .clamp(area_position.y, area_bottom - size.height as i32),
         ),
         1 => PhysicalPosition::new(
-            area_right - size.width as i32 / 2 - peek,
+            area_right - side_peek,
             position
                 .y
                 .clamp(area_position.y, area_bottom - size.height as i32),
@@ -1432,14 +1451,13 @@ fn redock_main_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<boo
     let size = window.outer_size().map_err(|error| error.to_string())?;
     let area_right = area_position.x + area_size.width as i32;
     let area_bottom = area_position.y + area_size.height as i32;
+    let side_peek = (size.width as f64 * SIDE_DOCK_VISIBLE_RATIO).round() as i32;
     let peek = (14.0 * scale_factor).round() as i32;
     let docked = match dock_edge {
         DockEdge::Left => {
-            PhysicalPosition::new(area_position.x - size.width as i32 / 2 + peek, position.y)
+            PhysicalPosition::new(area_position.x - size.width as i32 + side_peek, position.y)
         }
-        DockEdge::Right => {
-            PhysicalPosition::new(area_right - size.width as i32 / 2 - peek, position.y)
-        }
+        DockEdge::Right => PhysicalPosition::new(area_right - side_peek, position.y),
         DockEdge::Top => {
             PhysicalPosition::new(position.x, area_position.y - size.height as i32 / 2 + peek)
         }

@@ -1,6 +1,6 @@
 import type { DashboardLocale, MascotSettings } from "./types";
 const STORAGE_KEY = "nightlight-mascot-settings";
-const SETTINGS_SCHEMA_VERSION = 3;
+const SETTINGS_SCHEMA_VERSION = 4;
 const UI_STORAGE_KEY = "desktop-mascot-dashboard-preferences";
 const AUTHOR_DATA_CACHE_KEY = "desktop-mascot-author-data";
 const AUTHOR_DATA_URL = "https://raw.githubusercontent.com/jingluoguo/jingluo_web/master/author.json";
@@ -12,6 +12,7 @@ const DEFAULT_SETTINGS: MascotSettings = {
   outlineVisible: true,
   followCursor: true,
   edgeDock: false,
+  edgeDockThreshold: 20,
   bodyColor: "#bdeef2",
   outlineColor: "#23434d",
   accentColor: "#a9d9ff",
@@ -52,6 +53,7 @@ const uiText = {
     followHint: "失去焦点时仍会感知系统鼠标位置",
     edgeDock: "边缘吸附",
     edgeDockHint: "松开拖拽后靠近屏幕边缘时自动收起；点击或提醒会自动弹出",
+    edgeDockThreshold: "吸附范围",
     outline: "模型轮廓",
     outlineHint: "显示角色外侧描边",
     bodyColor: "主体",
@@ -192,6 +194,7 @@ const uiText = {
     followHint: "Tracks the system cursor even when unfocused",
     edgeDock: "Edge dock",
     edgeDockHint: "Dock near a screen edge after dragging; click or reminders reveal it automatically",
+    edgeDockThreshold: "Snap range",
     outline: "Character outline",
     outlineHint: "Show the outline around the character",
     bodyColor: "Body",

@@ -518,6 +518,7 @@ export function SettingsWindow() {
               <GroupHeading eyebrow="POINTER" title={text.behavior} />
               <ToggleRow label={text.followCursor} description={text.followHint} checked={settings.followCursor} onChange={(checked) => update("followCursor", checked)} />
               <ToggleRow label={text.edgeDock} description={text.edgeDockHint} checked={settings.edgeDock} onChange={(checked) => update("edgeDock", checked)} />
+              <div className="control-row"><label htmlFor="edge-dock-threshold">{text.edgeDockThreshold}</label><div className="range-wrap"><input id="edge-dock-threshold" type="range" min="0" max="40" step="1" value={settings.edgeDockThreshold} disabled={!settings.edgeDock} onChange={(event) => update("edgeDockThreshold", Number(event.target.value))} /><output>{settings.edgeDockThreshold}px</output></div></div>
             </section>
             <section className="settings-group">
               <GroupHeading eyebrow="SHORTCUTS" title={text.recordShortcut} />

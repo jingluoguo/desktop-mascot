@@ -108,6 +108,7 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
       .then((position) => position && invoke<boolean>("dock_main_window_to_edge", {
         windowX: position.x,
         windowY: position.y,
+        snapThreshold: settingsRef.current.edgeDockThreshold ?? 20,
       }))
       .catch(() => undefined);
   };
@@ -268,6 +269,17 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   useEffect(() => {
     if (!settings.edgeDock) void revealDockedPet();
   }, [settings.edgeDock]);
+
+  useEffect(() => {
+    // A previously saved side dock may have used a different canvas footprint.
+    // Reveal it once at startup so a custom model can never start offscreen.
+    if (!settingsRef.current.edgeDock) return;
+    void revealDockedPet().then((revealed) => {
+      if (revealed) scheduleEdgeDockReturn();
+    });
+    // Run only for the initial saved setting.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!hostRef.current) return;
