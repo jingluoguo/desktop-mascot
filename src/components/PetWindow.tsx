@@ -21,7 +21,7 @@ const EDGE_DOCK_RETURN_DELAY = 6000;
 const DRAG_EMOTION_REPEAT_DELAY = 1800;
 const DRAG_MOVEMENT_THRESHOLD = 4;
 const CONTEXT_MENU_WIDTH = 220;
-const CONTEXT_MENU_HEIGHT = 236;
+const CONTEXT_MENU_HEIGHT = 208;
 
 export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { modelRegistryVersion: number; onModelRegistryReload: () => Promise<void> }) {
   const hostRef = useRef<HTMLDivElement>(null);

@@ -155,20 +155,29 @@ button { font: inherit; }
 /* The context menu lives in its own native window, so it can extend beyond
    the mascot window while staying anchored to the pointer's top-left point. */
 .context-menu-window { width: 100%; height: 100%; overflow: hidden; border-radius: 11px; background: transparent; isolation: isolate; -webkit-mask-image: -webkit-radial-gradient(white, black); }
-.context-menu-window .pet-menu { position: relative; inset: auto; width: 100%; height: 100%; padding: 5px 7px; border-radius: 11px; overflow: hidden; background-clip: padding-box; }
+.context-menu-window .pet-menu { position: relative; inset: auto; width: 100%; padding: 5px 7px; border-radius: 11px; overflow: hidden; background-clip: padding-box; }
 .context-menu-window .menu-actions { gap: 1px; padding: 0; }
 .context-menu-window .menu-actions button { min-height: 32px; padding: 6px 9px; border-radius: 6px; }
 .context-menu-window .menu-actions button + button { margin-top: 1px; }
 .context-menu-window .menu-section { display: grid; gap: 7px; padding: 7px 5px 9px; border-bottom: 1px solid rgba(143, 224, 208, .16); }
 .context-menu-window .menu-section > span { color: #71938e; font: 9px ui-monospace, monospace; letter-spacing: .11em; }
-.quick-reaction-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
-.quick-reaction-actions button { min-width: 0; min-height: 30px; padding: 5px 2px; overflow: hidden; color: #b6cfca; border: 1px solid rgba(143, 224, 208, .14); border-radius: 5px; background: rgba(143, 224, 208, .05); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.quick-reaction-heading { display: flex; align-items: center; justify-content: space-between; }
+.quick-reaction-nav { display: flex; gap: 2px; }
+.quick-reaction-nav button { display: grid; width: 18px; height: 18px; place-items: center; padding: 0 0 2px; color: #71938e; border: 1px solid rgba(143, 224, 208, .16); border-radius: 4px; background: transparent; font-size: 15px; line-height: 1; cursor: pointer; }
+.quick-reaction-nav button:hover, .quick-reaction-nav button:focus-visible { color: #e9faf5; border-color: rgba(143, 224, 208, .35); background: rgba(143, 224, 208, .12); outline: none; }
+.quick-reaction-scroll { overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: none; scroll-behavior: smooth; touch-action: pan-x; }
+.quick-reaction-scroll::-webkit-scrollbar { display: none; }
+.quick-reaction-actions { display: flex; gap: 4px; width: max-content; }
+.quick-reaction-actions button { display: grid; flex: 0 0 55px; min-width: 0; min-height: 30px; padding: 5px 3px; overflow: hidden; color: #b6cfca; border: 1px solid rgba(143, 224, 208, .14); border-radius: 5px; background: rgba(143, 224, 208, .05); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; scroll-snap-align: start; }
+.quick-reaction-actions button span { overflow: hidden; text-overflow: ellipsis; }
 .quick-reaction-actions button:hover, .quick-reaction-actions button:focus-visible { color: #e9faf5; border-color: rgba(143, 224, 208, .35); background: rgba(143, 224, 208, .15); outline: none; }
 .context-menu-window .quick-accessory { display: flex; align-items: center; justify-content: space-between; min-height: 29px; padding: 5px 3px; color: #9fc7bd; border: 0; background: transparent; font-size: 10px; cursor: pointer; }
 .context-menu-window .quick-accessory:hover, .context-menu-window .quick-accessory:focus-visible { color: #e9faf5; outline: none; }
 .context-menu-window .quick-accessory small { color: #63817c; font: 9px ui-monospace, monospace; }
 .theme-light .context-menu-window .menu-section { border-color: rgba(24, 127, 129, .15); }
 .theme-light .context-menu-window .menu-section > span { color: #668681; }
+.theme-light .quick-reaction-nav button { color: #668681; border-color: rgba(24, 127, 129, .16); }
+.theme-light .quick-reaction-nav button:hover, .theme-light .quick-reaction-nav button:focus-visible { color: #143b3b; border-color: rgba(24, 127, 129, .3); background: rgba(24, 127, 129, .1); }
 .theme-light .quick-reaction-actions button { color: #385957; border-color: rgba(24, 127, 129, .16); background: rgba(24, 127, 129, .04); }
 .theme-light .quick-reaction-actions button:hover, .theme-light .quick-reaction-actions button:focus-visible { color: #143b3b; border-color: rgba(24, 127, 129, .3); background: rgba(24, 127, 129, .11); }
 
