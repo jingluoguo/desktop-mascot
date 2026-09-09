@@ -1,6 +1,6 @@
-import type { DashboardLocale, MascotSettings } from "./types";
+import type { DashboardLocale, InteractionTrigger, MascotSettings } from "./types";
 const STORAGE_KEY = "nightlight-mascot-settings";
-const SETTINGS_SCHEMA_VERSION = 4;
+const SETTINGS_SCHEMA_VERSION = 5;
 const UI_STORAGE_KEY = "desktop-mascot-dashboard-preferences";
 const AUTHOR_DATA_CACHE_KEY = "desktop-mascot-author-data";
 const AUTHOR_DATA_URL = "https://raw.githubusercontent.com/jingluoguo/jingluo_web/master/author.json";
@@ -20,7 +20,19 @@ const DEFAULT_SETTINGS: MascotSettings = {
   dashboardShortcut: "CommandOrControl+Shift+D",
   faceVariant: "default",
   accessories: {},
+  interactions: {
+    click: "10",
+    doubleClick: "16",
+    hover: "11",
+    drag: "38",
+  },
 };
+const interactionTriggers: Array<{ id: InteractionTrigger; defaultEmotion: string }> = [
+  { id: "click", defaultEmotion: "10" },
+  { id: "doubleClick", defaultEmotion: "16" },
+  { id: "hover", defaultEmotion: "11" },
+  { id: "drag", defaultEmotion: "38" },
+];
 const MAX_MASCOT_SIZE = 160;
 
 const characters = [
@@ -52,8 +64,25 @@ const uiText = {
     followCursor: "鼠标跟随",
     followHint: "失去焦点时仍会感知系统鼠标位置",
     edgeDock: "边缘吸附",
-    edgeDockHint: "松开拖拽后靠近屏幕边缘时自动收起；点击或提醒会自动弹出",
+    edgeDockHint: "松开拖拽后靠近屏幕边缘时自动收起；提醒会自动弹出",
     edgeDockThreshold: "吸附范围",
+    interactions: "互动反应",
+    interactionsHint: "为点击、双击、悬停和拖拽设置反应。模型未声明的反应会自动跳过。",
+    interactionClick: "点击",
+    interactionClickHint: "轻点宠物时触发",
+    interactionDoubleClick: "双击",
+    interactionDoubleClickHint: "连续轻点两次时触发",
+    interactionHover: "悬停",
+    interactionHoverHint: "鼠标进入宠物时触发",
+    interactionDrag: "拖拽",
+    interactionDragHint: "拖动宠物后松开时触发",
+    interactionNone: "不触发反应",
+    interactionUnavailable: "当前模型未声明此反应，将保持当前状态",
+    quickInteractions: "快捷反应",
+    quickHappy: "开心",
+    quickCurious: "好奇",
+    quickLove: "心动",
+    toggleAccessory: "切换配件",
     outline: "模型轮廓",
     outlineHint: "显示角色外侧描边",
     bodyColor: "主体",
@@ -193,8 +222,25 @@ const uiText = {
     followCursor: "Follow cursor",
     followHint: "Tracks the system cursor even when unfocused",
     edgeDock: "Edge dock",
-    edgeDockHint: "Dock near a screen edge after dragging; click or reminders reveal it automatically",
+    edgeDockHint: "Dock near a screen edge after dragging; reminders reveal it automatically",
     edgeDockThreshold: "Snap range",
+    interactions: "Interaction responses",
+    interactionsHint: "Choose reactions for click, double click, hover, and drag. Reactions not declared by a model are safely skipped.",
+    interactionClick: "Click",
+    interactionClickHint: "Triggers when the mascot is clicked",
+    interactionDoubleClick: "Double click",
+    interactionDoubleClickHint: "Triggers when the mascot is clicked twice",
+    interactionHover: "Hover",
+    interactionHoverHint: "Triggers when the pointer enters the mascot",
+    interactionDrag: "Drag",
+    interactionDragHint: "Triggers when the mascot is dropped",
+    interactionNone: "No reaction",
+    interactionUnavailable: "This model has not declared this reaction; the current state is kept",
+    quickInteractions: "Quick reactions",
+    quickHappy: "Happy",
+    quickCurious: "Curious",
+    quickLove: "Love",
+    toggleAccessory: "Toggle accessory",
     outline: "Character outline",
     outlineHint: "Show the outline around the character",
     bodyColor: "Body",
@@ -338,5 +384,5 @@ const defaultThemes: Record<string, Pick<MascotSettings, "bodyColor" | "outlineC
   ghost: { bodyColor: "#bdeef2", outlineColor: "#23434d", accentColor: "#a9d9ff" },
   jelly: { bodyColor: "#f29cc2", outlineColor: "#5a243e", accentColor: "#ffe0a8" },
 };
-export { STORAGE_KEY, SETTINGS_SCHEMA_VERSION, UI_STORAGE_KEY, AUTHOR_DATA_CACHE_KEY, AUTHOR_DATA_URL, DEFAULT_SETTINGS, MAX_MASCOT_SIZE, characters, uiText, englishEmotionGroups, workTypeName, workTypeClass, defaultThemes };
+export { STORAGE_KEY, SETTINGS_SCHEMA_VERSION, UI_STORAGE_KEY, AUTHOR_DATA_CACHE_KEY, AUTHOR_DATA_URL, DEFAULT_SETTINGS, MAX_MASCOT_SIZE, interactionTriggers, characters, uiText, englishEmotionGroups, workTypeName, workTypeClass, defaultThemes };
 export type { UiCopy };

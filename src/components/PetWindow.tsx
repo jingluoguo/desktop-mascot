@@ -6,7 +6,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import type { MascotInstance } from "lively-mascot";
 import { MAX_MASCOT_SIZE } from "../config";
-import type { MascotSettings, Reminder } from "../types";
+import type { InteractionTrigger, MascotSettings, Reminder } from "../types";
 import { loadSettings, openSettingsWindow, persistSettings, petWindowSize, setGlobalShortcuts } from "../lib/settings";
 import { getLivelyMascot } from "../lib/mascotRuntime";
 import { checkForAppUpdate } from "../lib/appUpdates";
@@ -18,11 +18,14 @@ const MODEL_HIT_SELECTOR = [
 
 const revealDockedPet = () => invoke<boolean>("reveal_main_window").catch(() => false);
 const EDGE_DOCK_RETURN_DELAY = 6000;
+const DRAG_EMOTION_REPEAT_DELAY = 1800;
+const DRAG_MOVEMENT_THRESHOLD = 4;
 
 export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { modelRegistryVersion: number; onModelRegistryReload: () => Promise<void> }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const mascotRef = useRef<MascotInstance | null>(null);
-  const happyResetTimerRef = useRef<number | null>(null);
+  const interactionResetTimerRef = useRef<number | null>(null);
+  const clickTimerRef = useRef<number | null>(null);
   const reminderResetTimerRef = useRef<number | null>(null);
   const scaleFrameRef = useRef<number | null>(null);
   const scaleTargetRef = useRef(1);
@@ -38,6 +41,11 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   const dragCursorPollBusyRef = useRef(false);
   const dragPositionWriteRef = useRef<Promise<void> | null>(null);
   const edgeDockReturnTimerRef = useRef<number | null>(null);
+  const ignoreHoverUntilRef = useRef(0);
+  const pointerOverMascotRef = useRef(false);
+  const dragEmotionTimerRef = useRef<number | null>(null);
+  const dragEmotionFrameRef = useRef<number | null>(null);
+  const activeDragEmotionRef = useRef<string | null>(null);
   const dragSequenceRef = useRef(0);
   const dragStateRef = useRef<{
     sequence: number;
@@ -78,17 +86,96 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
     }, EDGE_DOCK_RETURN_DELAY);
   };
 
-  const triggerHappy = () => {
-    const showHappy = () => {
-      if (happyResetTimerRef.current !== null) window.clearTimeout(happyResetTimerRef.current);
-      setActiveEmotion("10");
-      happyResetTimerRef.current = window.setTimeout(() => {
-        setActiveEmotion("02");
-        happyResetTimerRef.current = null;
+  const interactionEmotion = (trigger: InteractionTrigger, overrideEmotion?: string) => {
+    const livelyMascot = getLivelyMascot();
+    const model = livelyMascot?.models[settingsRef.current.character];
+    const emotion = overrideEmotion ?? settingsRef.current.interactions[trigger];
+    const declaredEmotions = model?.interactions?.[trigger];
+    return !emotion || emotion === "none" || !livelyMascot?.emotions[emotion] || (declaredEmotions && !declaredEmotions.includes(emotion))
+      ? null
+      : emotion;
+  };
+
+  const triggerInteraction = (trigger: InteractionTrigger, overrideEmotion?: string) => {
+    const emotion = interactionEmotion(trigger, overrideEmotion);
+    if (!emotion) return;
+    const showReaction = () => {
+      if (interactionResetTimerRef.current !== null) window.clearTimeout(interactionResetTimerRef.current);
+      setActiveEmotion(emotion);
+      interactionResetTimerRef.current = window.setTimeout(() => {
+        setActiveEmotion(settingsRef.current.emotion);
+        interactionResetTimerRef.current = null;
       }, 2200);
     };
-    void revealDockedPet().then(showHappy);
+    showReaction();
     scheduleEdgeDockReturn();
+  };
+
+  const updateHoverState = (pointerOverMascot: boolean) => {
+    if (!pointerOverMascot) {
+      pointerOverMascotRef.current = false;
+      return;
+    }
+    if (pointerOverMascotRef.current || dragStateRef.current || performance.now() < ignoreHoverUntilRef.current) return;
+    pointerOverMascotRef.current = true;
+    triggerInteraction("hover");
+  };
+
+  const scheduleClickInteraction = () => {
+    if (clickTimerRef.current !== null) window.clearTimeout(clickTimerRef.current);
+    clickTimerRef.current = window.setTimeout(() => {
+      triggerInteraction("click");
+      clickTimerRef.current = null;
+    }, 240);
+  };
+
+  const cancelInteraction = () => {
+    if (clickTimerRef.current !== null) {
+      window.clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+    if (interactionResetTimerRef.current !== null) {
+      window.clearTimeout(interactionResetTimerRef.current);
+      interactionResetTimerRef.current = null;
+      setActiveEmotion(settingsRef.current.emotion);
+    }
+  };
+
+  const startDragEmotion = () => {
+    if (activeDragEmotionRef.current) return;
+    const emotion = interactionEmotion("drag");
+    if (!emotion) return;
+    activeDragEmotionRef.current = emotion;
+    if (interactionResetTimerRef.current !== null) {
+      window.clearTimeout(interactionResetTimerRef.current);
+      interactionResetTimerRef.current = null;
+    }
+    setActiveEmotion(emotion);
+    const replay = () => {
+      const mascot = mascotRef.current;
+      if (!mascot || !dragStateRef.current || activeDragEmotionRef.current !== emotion) return;
+      mascot.setEmotion(settingsRef.current.emotion);
+      dragEmotionFrameRef.current = window.requestAnimationFrame(() => {
+        dragEmotionFrameRef.current = null;
+        if (dragStateRef.current && activeDragEmotionRef.current === emotion) mascot.setEmotion(emotion);
+      });
+    };
+    replay();
+    dragEmotionTimerRef.current = window.setInterval(replay, DRAG_EMOTION_REPEAT_DELAY);
+  };
+
+  const stopDragEmotion = () => {
+    if (!activeDragEmotionRef.current) return;
+    activeDragEmotionRef.current = null;
+    if (dragEmotionTimerRef.current !== null) {
+      window.clearInterval(dragEmotionTimerRef.current);
+      dragEmotionTimerRef.current = null;
+    }
+    if (dragEmotionFrameRef.current !== null) {
+      window.cancelAnimationFrame(dragEmotionFrameRef.current);
+      dragEmotionFrameRef.current = null;
+    }
+    setActiveEmotion(settingsRef.current.emotion);
   };
 
   const finishDragging = (dragState: NonNullable<typeof dragStateRef.current>, pendingWrite: Promise<void> | null) => {
@@ -113,6 +200,9 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
       .catch(() => undefined);
   };
 
+  const hasDragged = (dragState: NonNullable<typeof dragStateRef.current>, cursorX: number, cursorY: number) =>
+    Math.hypot(cursorX - dragState.startCursorX, cursorY - dragState.startCursorY) >= DRAG_MOVEMENT_THRESHOLD;
+
   const stopDragging = (event: PointerEvent) => {
     const dragState = dragStateRef.current;
     if (!dragState || dragState.pointerId !== event.pointerId) return;
@@ -120,8 +210,9 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
     const releaseCursorY = Math.round(event.screenY * window.devicePixelRatio);
     dragState.latestCursorX = releaseCursorX;
     dragState.latestCursorY = releaseCursorY;
-    dragState.moved ||= releaseCursorX !== dragState.startCursorX || releaseCursorY !== dragState.startCursorY;
+    dragState.moved ||= hasDragged(dragState, releaseCursorX, releaseCursorY);
     dragStateRef.current = null;
+    stopDragEmotion();
     dragSequenceRef.current += 1;
     if (dragCursorPollRef.current !== null) {
       window.clearInterval(dragCursorPollRef.current);
@@ -133,8 +224,12 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
     }
     if (dragState.target.hasPointerCapture(event.pointerId)) dragState.target.releasePointerCapture(event.pointerId);
     const pendingWrite = dragPositionWriteRef.current;
-    if (dragState.moved) finishDragging(dragState, pendingWrite);
-    else if (event.type === "pointerup") triggerHappy();
+    ignoreHoverUntilRef.current = performance.now() + 300;
+    if (dragState.moved) {
+      finishDragging(dragState, pendingWrite);
+    } else if (event.type === "pointerup") {
+      scheduleClickInteraction();
+    }
   };
 
   const startDragging = (event: PointerEvent) => {
@@ -149,6 +244,9 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
     } catch {
       return;
     }
+    cancelInteraction();
+    ignoreHoverUntilRef.current = Number.POSITIVE_INFINITY;
+    pointerOverMascotRef.current = false;
     const dragSequence = dragSequenceRef.current + 1;
     dragSequenceRef.current = dragSequence;
     dragStateRef.current = {
@@ -182,7 +280,8 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
           if (!currentDrag || currentDrag.sequence !== dragSequence) return;
           currentDrag.latestCursorX = position.x;
           currentDrag.latestCursorY = position.y;
-          currentDrag.moved ||= position.x !== currentDrag.startCursorX || position.y !== currentDrag.startCursorY;
+          currentDrag.moved ||= hasDragged(currentDrag, position.x, position.y);
+          if (currentDrag.moved) startDragEmotion();
           queueDraggedWindowPosition();
         }).catch(() => undefined).finally(() => {
           dragCursorPollBusyRef.current = false;
@@ -190,6 +289,15 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
       }, 16);
       queueDraggedWindowPosition();
     }).catch(() => undefined);
+  };
+
+  const handleDoubleClick = (event: MouseEvent) => {
+    event.preventDefault();
+    if (clickTimerRef.current !== null) {
+      window.clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+    triggerInteraction("doubleClick");
   };
 
   const queueDraggedWindowPosition = () => {
@@ -202,9 +310,10 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
       activeDrag.pending = true;
       const cursorX = activeDrag.latestCursorX;
       const cursorY = activeDrag.latestCursorY;
-      activeDrag.moved ||= cursorX !== activeDrag.startCursorX || cursorY !== activeDrag.startCursorY;
+      activeDrag.moved ||= hasDragged(activeDrag, cursorX, cursorY);
       const x = activeDrag.windowPosition.x + Math.round(cursorX - activeDrag.startCursorX);
       const y = activeDrag.windowPosition.y + Math.round(cursorY - activeDrag.startCursorY);
+      if (activeDrag.moved) startDragEmotion();
       const positionWrite = getCurrentWindow().setPosition(new PhysicalPosition(x, y));
       dragPositionWriteRef.current = positionWrite;
       void positionWrite.catch(() => undefined).finally(() => {
@@ -235,6 +344,27 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
           void openSettingsWindow(settingsRef.current);
         }),
         listen("custom-models-updated", () => { void onModelRegistryReload(); }),
+        listen<{ emotion: string }>("mascot-quick-emotion", ({ payload }) => {
+          triggerInteraction("click", payload.emotion);
+        }),
+        listen("mascot-toggle-accessory", () => {
+          const mascot = mascotRef.current;
+          const [id, accessory] = Object.entries(mascot?.getAccessories() ?? {})[0] ?? [];
+          if (!id || !accessory) return;
+          const next = {
+            ...settingsRef.current,
+            accessories: { ...settingsRef.current.accessories, [`${settingsRef.current.character}:${id}`]: !accessory.enabled },
+          };
+          mascot?.setAccessory(id, !accessory.enabled);
+          settingsRef.current = next;
+          setSettings(next);
+          persistSettings(next);
+          void emitTo("settings", "mascot-settings-state", next);
+        }),
+        listen("mascot-context-menu-request", () => {
+          const hasAccessories = Object.keys(mascotRef.current?.getAccessories() ?? {}).length > 0;
+          void emitTo("context-menu", "mascot-context-menu-state", { hasAccessories });
+        }),
         listen<Reminder>("reminder-fired", ({ payload }) => {
           void revealDockedPet().then(() => {
             if (reminderResetTimerRef.current !== null) window.clearTimeout(reminderResetTimerRef.current);
@@ -271,17 +401,6 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   }, [settings.edgeDock]);
 
   useEffect(() => {
-    // A previously saved side dock may have used a different canvas footprint.
-    // Reveal it once at startup so a custom model can never start offscreen.
-    if (!settingsRef.current.edgeDock) return;
-    void revealDockedPet().then((revealed) => {
-      if (revealed) scheduleEdgeDockReturn();
-    });
-    // Run only for the initial saved setting.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
     if (!hostRef.current) return;
     const livelyMascot = getLivelyMascot();
     if (!livelyMascot) return;
@@ -312,11 +431,19 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
     mascot.el.addEventListener("pointerup", stopDragging);
     mascot.el.addEventListener("pointercancel", stopDragging);
     mascot.el.addEventListener("lostpointercapture", stopDragging);
+    mascot.el.addEventListener("dblclick", handleDoubleClick);
+    const handlePointerEnter = () => updateHoverState(true);
+    const handlePointerLeave = () => updateHoverState(false);
+    mascot.el.addEventListener("pointerenter", handlePointerEnter);
+    mascot.el.addEventListener("pointerleave", handlePointerLeave);
     return () => {
       mascot.el.removeEventListener("pointerdown", startDragging);
       mascot.el.removeEventListener("pointerup", stopDragging);
       mascot.el.removeEventListener("pointercancel", stopDragging);
       mascot.el.removeEventListener("lostpointercapture", stopDragging);
+      mascot.el.removeEventListener("dblclick", handleDoubleClick);
+      mascot.el.removeEventListener("pointerenter", handlePointerEnter);
+      mascot.el.removeEventListener("pointerleave", handlePointerLeave);
       mascot.destroy();
       mascotRef.current = null;
     };
@@ -462,7 +589,9 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
       if (!event.isTrusted) return;
       if (dragStateRef.current) return;
       const target = event.target instanceof Element ? event.target : null;
-      setCursorEventsIgnored(!target?.closest(MODEL_HIT_SELECTOR));
+      const pointerOverMascot = Boolean(target?.closest(MODEL_HIT_SELECTOR));
+      setCursorEventsIgnored(!pointerOverMascot);
+      updateHoverState(pointerOverMascot);
     };
     const hitTestCursor = async () => {
       if (hitTestBusy || disposed) return;
@@ -480,7 +609,9 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
           (cursor.x - windowPosition.x) / scaleFactor,
           (cursor.y - windowPosition.y) / scaleFactor,
         );
-        setCursorEventsIgnored(!element?.closest(MODEL_HIT_SELECTOR));
+        const pointerOverMascot = Boolean(element?.closest(MODEL_HIT_SELECTOR));
+        setCursorEventsIgnored(!pointerOverMascot);
+        updateHoverState(pointerOverMascot);
       } catch {
         // Browser previews do not expose native cursor coordinates.
       } finally {
@@ -506,8 +637,10 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
     }).catch(() => undefined);
     window.addEventListener("pointermove", handlePointerMove, true);
     const hitTestPoll = window.setInterval(() => {
-      if (ignoreCursorEventsRef.current) void hitTestCursor();
-    }, 120);
+      // Pointer events cover the normal case. Poll only while the transparent
+      // window cannot receive them, or while confirming that a hover ended.
+      if (ignoreCursorEventsRef.current || pointerOverMascotRef.current) void hitTestCursor();
+    }, 250);
     void hitTestCursor();
     return () => {
       disposed = true;
@@ -521,7 +654,8 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   }, []);
 
   useEffect(() => () => {
-    if (happyResetTimerRef.current !== null) window.clearTimeout(happyResetTimerRef.current);
+    if (interactionResetTimerRef.current !== null) window.clearTimeout(interactionResetTimerRef.current);
+    if (clickTimerRef.current !== null) window.clearTimeout(clickTimerRef.current);
     if (reminderResetTimerRef.current !== null) window.clearTimeout(reminderResetTimerRef.current);
     if (edgeDockReturnTimerRef.current !== null) window.clearTimeout(edgeDockReturnTimerRef.current);
     if (scaleFrameRef.current !== null) window.cancelAnimationFrame(scaleFrameRef.current);
@@ -547,8 +681,8 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
 }
 
 const openContextMenuWindow = async (x: number, y: number) => {
-  const width = 184;
-  const height = 114;
+  const width = 220;
+  const height = 236;
   let menuWindow = await WebviewWindow.getByLabel("context-menu");
   if (!menuWindow) {
     menuWindow = new WebviewWindow("context-menu", {

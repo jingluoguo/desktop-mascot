@@ -2,7 +2,7 @@ import { emitTo } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, STORAGE_KEY, UI_STORAGE_KEY } from "../config";
-import type { DashboardPreferences, MascotSettings, Reminder } from "../types";
+import type { DashboardPreferences, InteractionSettings, InteractionTrigger, MascotSettings, Reminder } from "../types";
 import { isRecord } from "./author";
 const persistSettings = (settings: MascotSettings) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
@@ -34,6 +34,14 @@ const loadSettings = (): MascotSettings => {
     const accessories = isRecord(saved.accessories)
       ? Object.fromEntries(Object.entries(saved.accessories).filter(([, value]) => typeof value === "boolean"))
       : {};
+    const interactions = Object.fromEntries(
+      (Object.keys(DEFAULT_SETTINGS.interactions) as InteractionTrigger[]).map((trigger) => [
+        trigger,
+        typeof saved.interactions === "object" && saved.interactions !== null && typeof (saved.interactions as Record<string, unknown>)[trigger] === "string"
+          ? (saved.interactions as Record<string, string>)[trigger]
+          : DEFAULT_SETTINGS.interactions[trigger],
+      ]),
+    ) as InteractionSettings;
     const color = (value: unknown, fallback: string) =>
       typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
     return {
@@ -43,6 +51,7 @@ const loadSettings = (): MascotSettings => {
       viewMode,
       faceVariant,
       accessories,
+      interactions,
       outlineVisible: typeof saved.outlineVisible === "boolean" ? saved.outlineVisible : DEFAULT_SETTINGS.outlineVisible,
       followCursor: typeof saved.followCursor === "boolean" ? saved.followCursor : DEFAULT_SETTINGS.followCursor,
       edgeDock: typeof saved.edgeDock === "boolean" ? saved.edgeDock : DEFAULT_SETTINGS.edgeDock,

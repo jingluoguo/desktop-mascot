@@ -159,6 +159,18 @@ button { font: inherit; }
 .context-menu-window .menu-actions { gap: 1px; padding: 0; }
 .context-menu-window .menu-actions button { min-height: 32px; padding: 6px 9px; border-radius: 6px; }
 .context-menu-window .menu-actions button + button { margin-top: 1px; }
+.context-menu-window .menu-section { display: grid; gap: 7px; padding: 7px 5px 9px; border-bottom: 1px solid rgba(143, 224, 208, .16); }
+.context-menu-window .menu-section > span { color: #71938e; font: 9px ui-monospace, monospace; letter-spacing: .11em; }
+.quick-reaction-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.quick-reaction-actions button { min-width: 0; min-height: 30px; padding: 5px 2px; overflow: hidden; color: #b6cfca; border: 1px solid rgba(143, 224, 208, .14); border-radius: 5px; background: rgba(143, 224, 208, .05); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.quick-reaction-actions button:hover, .quick-reaction-actions button:focus-visible { color: #e9faf5; border-color: rgba(143, 224, 208, .35); background: rgba(143, 224, 208, .15); outline: none; }
+.context-menu-window .quick-accessory { display: flex; align-items: center; justify-content: space-between; min-height: 29px; padding: 5px 3px; color: #9fc7bd; border: 0; background: transparent; font-size: 10px; cursor: pointer; }
+.context-menu-window .quick-accessory:hover, .context-menu-window .quick-accessory:focus-visible { color: #e9faf5; outline: none; }
+.context-menu-window .quick-accessory small { color: #63817c; font: 9px ui-monospace, monospace; }
+.theme-light .context-menu-window .menu-section { border-color: rgba(24, 127, 129, .15); }
+.theme-light .context-menu-window .menu-section > span { color: #668681; }
+.theme-light .quick-reaction-actions button { color: #385957; border-color: rgba(24, 127, 129, .16); background: rgba(24, 127, 129, .04); }
+.theme-light .quick-reaction-actions button:hover, .theme-light .quick-reaction-actions button:focus-visible { color: #143b3b; border-color: rgba(24, 127, 129, .3); background: rgba(24, 127, 129, .11); }
 
 /* Separate settings window */
 .settings-shell { display: flex; flex-direction: column; width: 100%; height: 100vh; min-height: 0; overflow: hidden; padding: 34px 38px; color: #e8f4f6; background: #0c151a; font-family: "Avenir Next", "Helvetica Neue", sans-serif; }
@@ -445,6 +457,21 @@ button { font: inherit; }
 .dashboard-panel .color-row label { min-height: 30px; }
 .dashboard-panel .color-row input { width: 30px; height: 24px; border-radius: 6px; }
 .behavior-layout { width: min(760px, 100%); }
+.interaction-group { max-width: 620px; }
+.interaction-hint { max-width: 510px; margin: -5px 0 11px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.interaction-list { display: grid; border-top: 1px solid var(--line); }
+.interaction-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(148px, 210px); align-items: center; gap: 20px; min-height: 62px; padding: 9px 2px; border-bottom: 1px solid var(--line); }
+.interaction-row:last-child { border-bottom: 0; }
+.interaction-row > span { display: grid; gap: 4px; min-width: 0; }
+.interaction-row strong { color: var(--ink); font-size: 12px; font-weight: 580; }
+.interaction-row small { color: var(--muted); font-size: 10px; line-height: 1.35; }
+.interaction-row select { width: 100%; min-width: 0; min-height: 34px; padding: 0 26px 0 10px; overflow: hidden; color: var(--ink); border: 1px solid #49605a; border-radius: 6px; background: #121a19; font: 11px "Avenir Next", "Helvetica Neue", sans-serif; text-overflow: ellipsis; }
+.interaction-row select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.interaction-row select:disabled, .interaction-row option:disabled { color: var(--muted); }
+.theme-light .interaction-row select { border-color: #b9d0cc; background: #f6faf8; }
+@media (max-width: 560px) {
+  .interaction-row { grid-template-columns: 1fr; gap: 8px; padding-block: 12px; }
+}
 .reminders-layout { width: min(760px, 100%); }
 .reminders-overview .group-heading small { color: var(--muted); font-size: 11px; line-height: 1.55; }
 .reminders-toolbar { display: flex; align-items: center; justify-content: space-between; min-height: 44px; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, monospace; }

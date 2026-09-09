@@ -75,6 +75,21 @@ public/              Vite 静态资源
 
 用户模型可以导出为 `.livelymodel`、覆盖导入或删除。内置模型不能被删除或覆盖。应用会把用户模型复制到系统应用数据目录下的 `models/`，因此安装新版本时不会覆盖。
 
+模型包还可以在 `model.json` 中声明可用互动反应。未声明该字段的模型会兼容所有内置表情；声明后，桌宠只会为对应触发方式执行列出的表情，其他配置会安全地保持当前状态。
+
+```json
+{
+  "interactions": {
+    "click": ["10", "16"],
+    "doubleClick": ["16"],
+    "hover": ["11"],
+    "drag": ["38"]
+  }
+}
+```
+
+可用触发方式为 `click`、`doubleClick`、`hover` 和 `drag`。表情 ID 对应 `lively-mascot` 的表情定义，也可以是模型包定义的自定义表情。
+
 ## 许可
 
 项目代码遵循仓库中的 [LICENSE](LICENSE) 文件。角色渲染由 [`lively-mascot`](https://github.com/jingluoguo/lively-mascot) 提供。

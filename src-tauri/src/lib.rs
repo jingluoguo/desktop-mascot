@@ -157,7 +157,7 @@ fn persist_window_position(
 ) {
     if let Ok(dock_state) = state.dock_state.lock() {
         position.docked_edge = match &*dock_state {
-            Some(DockState::Docked(edge)) => Some(edge.clone()),
+            Some(DockState::Docked(edge)) | Some(DockState::Revealed(edge)) => Some(edge.clone()),
             _ => None,
         };
     }
@@ -861,6 +861,32 @@ fn validate_model_source(label: &str, source: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_model_interactions(manifest: &serde_json::Value) -> Result<(), String> {
+    let Some(interactions) = manifest.get("interactions") else {
+        return Ok(());
+    };
+    let interactions = interactions
+        .as_object()
+        .ok_or_else(|| "model.json interactions must be an object".to_string())?;
+    for (trigger, actions) in interactions {
+        if !matches!(trigger.as_str(), "click" | "doubleClick" | "hover" | "drag") {
+            return Err(format!("model.json has an unsupported interaction trigger: {trigger}"));
+        }
+        let actions = actions
+            .as_array()
+            .ok_or_else(|| format!("model.json interaction {trigger} must be an array"))?;
+        if actions.iter().any(|action| {
+            action
+                .as_str()
+                .map(|value| value.is_empty() || value.len() > 40)
+                .unwrap_or(true)
+        }) {
+            return Err(format!("model.json interaction {trigger} contains an invalid emotion id"));
+        }
+    }
+    Ok(())
+}
+
 fn model_summary_from_manifest(path: &Path) -> Result<CustomModelSummary, String> {
     let manifest = serde_json::from_str::<serde_json::Value>(
         &fs::read_to_string(path.join("model.json")).map_err(|error| error.to_string())?,
@@ -1009,6 +1035,7 @@ fn install_custom_model<R: tauri::Runtime>(
     validate_model_source("model.css", &upload.model_css)?;
     let manifest = serde_json::from_str::<serde_json::Value>(&upload.model_json)
         .map_err(|error| format!("model.json is invalid: {error}"))?;
+    validate_model_interactions(&manifest)?;
     let manifest_id = manifest
         .get("id")
         .and_then(serde_json::Value::as_str)
@@ -1683,7 +1710,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_builtin_model_id, valid_model_id, validate_model_source};
+    use super::{is_builtin_model_id, valid_model_id, validate_model_interactions, validate_model_source};
 
     #[test]
     fn accepts_skill_style_model_source() {
@@ -1710,5 +1737,24 @@ mod tests {
             validate_model_source("model.css", "@import url('https://example.com/model.css')")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn validates_declared_model_interactions() {
+        let valid = serde_json::json!({
+            "interactions": {
+                "click": ["10", "16"],
+                "drag": ["38"]
+            }
+        });
+        assert!(validate_model_interactions(&valid).is_ok());
+        assert!(validate_model_interactions(&serde_json::json!({
+            "interactions": { "tap": ["10"] }
+        }))
+        .is_err());
+        assert!(validate_model_interactions(&serde_json::json!({
+            "interactions": { "click": "10" }
+        }))
+        .is_err());
     }
 }

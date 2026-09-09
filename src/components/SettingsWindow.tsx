@@ -3,8 +3,8 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import type { EmotionDefinition, MascotInstance, ModelCapabilities, ViewMode } from "lively-mascot";
-import { AUTHOR_DATA_CACHE_KEY, AUTHOR_DATA_URL, characters, DEFAULT_SETTINGS, defaultThemes, englishEmotionGroups, UI_STORAGE_KEY, uiText, workTypeClass, workTypeName } from "../config";
-import type { AppUpdateStatus, AuthorData, AuthorTag, CustomModelSummary, DashboardPreferences, DashboardTab, MascotSettings, ModelAction, Reminder, ReminderSchedule, ShortcutSettingKey } from "../types";
+import { AUTHOR_DATA_CACHE_KEY, AUTHOR_DATA_URL, characters, DEFAULT_SETTINGS, defaultThemes, englishEmotionGroups, interactionTriggers, UI_STORAGE_KEY, uiText, workTypeClass, workTypeName } from "../config";
+import type { AppUpdateStatus, AuthorData, AuthorTag, CustomModelSummary, DashboardPreferences, DashboardTab, InteractionTrigger, MascotSettings, ModelAction, Reminder, ReminderSchedule, ShortcutSettingKey } from "../types";
 import { loadCachedAuthorData, openExternalUrl, parseAuthorData } from "../lib/author";
 import { checkForAppUpdate as resolveAppUpdate } from "../lib/appUpdates";
 import { downloadModelPackage, loadCustomModels, modelFilesFromSelection, modelImportErrorText } from "../lib/customModels";
@@ -437,6 +437,16 @@ export function SettingsWindow() {
   const activeModel = livelyMascot?.models?.[settings.character];
   const capabilityModel = runtimeCapabilities && runtimeCapabilities.presentation?.labels ? runtimeCapabilities : activeModel;
   const activeAccessories = Object.entries(capabilityModel?.accessories ?? {});
+  const interactionOptions = Object.entries(livelyMascot?.emotions ?? {}).map(([id, emotion]) => ({
+    value: id,
+    label: dashboardPreferences.locale === "zh-CN" ? emotion.desc || emotion.name || id : emotion.name || emotion.desc || id,
+  }));
+  const interactionCopy: Record<InteractionTrigger, { label: string; hint: string }> = {
+    click: { label: text.interactionClick, hint: text.interactionClickHint },
+    doubleClick: { label: text.interactionDoubleClick, hint: text.interactionDoubleClickHint },
+    hover: { label: text.interactionHover, hint: text.interactionHoverHint },
+    drag: { label: text.interactionDrag, hint: text.interactionDragHint },
+  };
   const modelMotion = capabilityModel?.rig
     ? Object.entries(capabilityModel.rig).filter(([, enabled]) => enabled).map(([name]) => name).join(", ")
     : "";
@@ -519,6 +529,27 @@ export function SettingsWindow() {
               <ToggleRow label={text.followCursor} description={text.followHint} checked={settings.followCursor} onChange={(checked) => update("followCursor", checked)} />
               <ToggleRow label={text.edgeDock} description={text.edgeDockHint} checked={settings.edgeDock} onChange={(checked) => update("edgeDock", checked)} />
               <div className="control-row"><label htmlFor="edge-dock-threshold">{text.edgeDockThreshold}</label><div className="range-wrap"><input id="edge-dock-threshold" type="range" min="0" max="40" step="1" value={settings.edgeDockThreshold} disabled={!settings.edgeDock} onChange={(event) => update("edgeDockThreshold", Number(event.target.value))} /><output>{settings.edgeDockThreshold}px</output></div></div>
+            </section>
+            <section className="settings-group interaction-group">
+              <GroupHeading eyebrow="INTERACTIONS" title={text.interactions} />
+              <p className="interaction-hint">{text.interactionsHint}</p>
+              <div className="interaction-list">
+                {interactionTriggers.map(({ id }) => {
+                  const configuredEmotion = settings.interactions[id];
+                  const declaredActions = activeModel?.interactions?.[id];
+                  const isUnavailable = declaredActions !== undefined && configuredEmotion !== "none" && !declaredActions.includes(configuredEmotion);
+                  const options = configuredEmotion !== "none" && !interactionOptions.some((option) => option.value === configuredEmotion)
+                    ? [{ value: configuredEmotion, label: configuredEmotion }, ...interactionOptions]
+                    : interactionOptions;
+                  return <label className="interaction-row" key={id}>
+                    <span><strong>{interactionCopy[id].label}</strong><small>{isUnavailable ? text.interactionUnavailable : interactionCopy[id].hint}</small></span>
+                    <select value={configuredEmotion} onChange={(event) => update("interactions", { ...settings.interactions, [id]: event.target.value })}>
+                      <option value="none">{text.interactionNone}</option>
+                      {options.map((option) => <option key={option.value} value={option.value} disabled={declaredActions !== undefined && !declaredActions.includes(option.value)}>{option.label}</option>)}
+                    </select>
+                  </label>;
+                })}
+              </div>
             </section>
             <section className="settings-group">
               <GroupHeading eyebrow="SHORTCUTS" title={text.recordShortcut} />
