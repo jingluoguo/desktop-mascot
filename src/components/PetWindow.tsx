@@ -6,8 +6,8 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import type { MascotInstance } from "lively-mascot";
 import { MAX_MASCOT_SIZE } from "../config";
-import type { InteractionTrigger, MascotSettings, Reminder } from "../types";
-import { loadSettings, openSettingsWindow, persistSettings, petWindowSize, setGlobalShortcuts } from "../lib/settings";
+import type { InteractionTrigger, MascotSettings, PomodoroState, Reminder } from "../types";
+import { getPomodoro, loadSettings, openSettingsWindow, persistSettings, petWindowSize, setGlobalShortcuts } from "../lib/settings";
 import { getLivelyMascot } from "../lib/mascotRuntime";
 import { checkForAppUpdate } from "../lib/appUpdates";
 
@@ -31,6 +31,7 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   const reminderResetTimerRef = useRef<number | null>(null);
   const reminderActiveRef = useRef(false);
   const reminderSequenceRef = useRef(0);
+  const pomodoroRef = useRef<PomodoroState | null>(null);
   const scaleFrameRef = useRef<number | null>(null);
   const scaleTargetRef = useRef(1);
   const scaleValueRef = useRef(1);
@@ -90,6 +91,18 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
     }, EDGE_DOCK_RETURN_DELAY);
   };
 
+  const pomodoroEmotion = () => {
+    const pomodoro = pomodoroRef.current;
+    if (!pomodoro || pomodoro.status === "idle") return null;
+    if (pomodoro.status === "paused") return "05";
+    return pomodoro.phase === "focus" ? "20" : pomodoro.phase === "shortBreak" ? "03" : "00";
+  };
+  const hasProtectedPresentation = () => pomodoroEmotion() !== null;
+  const restorePresentation = () => {
+    if (reminderActiveRef.current) return;
+    setActiveEmotion(pomodoroEmotion() ?? settingsRef.current.emotion);
+  };
+
   const interactionEmotion = (trigger: InteractionTrigger, overrideEmotion?: string) => {
     const livelyMascot = getLivelyMascot();
     const model = livelyMascot?.models[settingsRef.current.character];
@@ -101,14 +114,14 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   };
 
   const triggerInteraction = (trigger: InteractionTrigger, overrideEmotion?: string) => {
-    if (reminderActiveRef.current) return;
+    if (reminderActiveRef.current || hasProtectedPresentation()) return;
     const emotion = interactionEmotion(trigger, overrideEmotion);
     if (!emotion) return;
     const showReaction = () => {
       if (interactionResetTimerRef.current !== null) window.clearTimeout(interactionResetTimerRef.current);
       setActiveEmotion(emotion);
       interactionResetTimerRef.current = window.setTimeout(() => {
-        setActiveEmotion(settingsRef.current.emotion);
+        restorePresentation();
         interactionResetTimerRef.current = null;
       }, 2200);
     };
@@ -142,12 +155,12 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
     if (interactionResetTimerRef.current !== null) {
       window.clearTimeout(interactionResetTimerRef.current);
       interactionResetTimerRef.current = null;
-      setActiveEmotion(settingsRef.current.emotion);
+      restorePresentation();
     }
   };
 
   const startDragEmotion = () => {
-    if (reminderActiveRef.current || activeDragEmotionRef.current) return;
+    if (reminderActiveRef.current || activeDragEmotionRef.current || hasProtectedPresentation()) return;
     const emotion = interactionEmotion("drag");
     if (!emotion) return;
     activeDragEmotionRef.current = emotion;
@@ -180,7 +193,7 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
       window.cancelAnimationFrame(dragEmotionFrameRef.current);
       dragEmotionFrameRef.current = null;
     }
-    setActiveEmotion(settingsRef.current.emotion);
+    restorePresentation();
   };
 
   const finishDragging = (dragState: NonNullable<typeof dragStateRef.current>, pendingWrite: Promise<void> | null) => {
@@ -340,7 +353,7 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
           persistSettings(payload);
           settingsRef.current = payload;
           setSettings(payload);
-          setActiveEmotion(payload.emotion);
+          restorePresentation();
         }),
         listen("mascot-settings-request", () => {
           void emitTo("settings", "mascot-settings-state", settingsRef.current);
@@ -394,12 +407,41 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
             setActiveEmotion(payload.emotion || settingsRef.current.emotion);
             reminderResetTimerRef.current = window.setTimeout(() => {
               if (reminderSequenceRef.current !== reminderSequence) return;
-              setActiveEmotion(settingsRef.current.emotion);
               setActiveReminderTitle(null);
               reminderActiveRef.current = false;
+              restorePresentation();
               reminderResetTimerRef.current = null;
             }, 6000);
             if (!payload.systemNotification) scheduleEdgeDockReturn();
+          });
+        }),
+        listen<PomodoroState>("pomodoro-state", ({ payload }) => {
+          pomodoroRef.current = payload;
+          cancelInteraction();
+          stopDragEmotion();
+          restorePresentation();
+        }),
+        listen<PomodoroState>("pomodoro-completed", ({ payload }) => {
+          pomodoroRef.current = payload;
+          const reminderSequence = reminderSequenceRef.current + 1;
+          reminderSequenceRef.current = reminderSequence;
+          reminderActiveRef.current = true;
+          cancelInteraction();
+          stopDragEmotion();
+          void revealDockedPet().then(() => {
+            if (reminderSequenceRef.current !== reminderSequence) return;
+            if (reminderResetTimerRef.current !== null) window.clearTimeout(reminderResetTimerRef.current);
+            const hasBreakStarted = payload.phase === "shortBreak" || payload.phase === "longBreak";
+            setActiveReminderTitle(hasBreakStarted ? "专注完成，休息一下吧" : "休息结束，准备继续专注");
+            setActiveEmotion(hasBreakStarted ? "30" : "01");
+            reminderResetTimerRef.current = window.setTimeout(() => {
+              if (reminderSequenceRef.current !== reminderSequence) return;
+              setActiveReminderTitle(null);
+              reminderActiveRef.current = false;
+              restorePresentation();
+              reminderResetTimerRef.current = null;
+            }, 6000);
+            scheduleEdgeDockReturn();
           });
         }),
       ]);
@@ -415,6 +457,13 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
       unlisteners.forEach((unlisten) => unlisten());
     };
   }, [onModelRegistryReload]);
+
+  useEffect(() => {
+    void getPomodoro().then((pomodoro) => {
+      pomodoroRef.current = pomodoro;
+      restorePresentation();
+    }).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     void setGlobalShortcuts(settings).catch(() => undefined);

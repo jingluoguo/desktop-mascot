@@ -4,12 +4,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import type { EmotionDefinition, MascotInstance, ModelCapabilities, ViewMode } from "lively-mascot";
 import { AUTHOR_DATA_CACHE_KEY, AUTHOR_DATA_URL, characters, DEFAULT_SETTINGS, defaultThemes, englishEmotionGroups, interactionTriggers, UI_STORAGE_KEY, uiText, workTypeClass, workTypeName } from "../config";
-import type { AppUpdateStatus, AuthorData, AuthorTag, CustomModelSummary, DashboardPreferences, DashboardTab, InteractionTrigger, MascotSettings, ModelAction, Reminder, ReminderSchedule, ShortcutSettingKey } from "../types";
+import type { AppUpdateStatus, AuthorData, AuthorTag, CustomModelSummary, DashboardPreferences, DashboardTab, InteractionTrigger, MascotSettings, ModelAction, PomodoroPhase, PomodoroState, Reminder, ReminderSchedule, ShortcutSettingKey } from "../types";
 import { loadCachedAuthorData, openExternalUrl, parseAuthorData } from "../lib/author";
 import { checkForAppUpdate as resolveAppUpdate } from "../lib/appUpdates";
 import { downloadModelPackage, loadCustomModels, modelFilesFromSelection, modelImportErrorText } from "../lib/customModels";
 import { getLivelyMascot } from "../lib/mascotRuntime";
-import { deleteReminder, listReminders, loadDashboardPreferences, loadSettings, persistSettings, saveReminder, setGlobalShortcuts, shortcutDisplay, shortcutFromKeyboardEvent } from "../lib/settings";
+import { deleteReminder, getPomodoro, listReminders, loadDashboardPreferences, loadSettings, pausePomodoro, persistSettings, resetPomodoro, savePomodoro, saveReminder, setGlobalShortcuts, shortcutDisplay, shortcutFromKeyboardEvent, startPomodoro } from "../lib/settings";
 import { CharacterPreview } from "./CharacterPreview";
 import { GroupHeading, SegmentedControl, ToggleRow } from "./DashboardControls";
 
@@ -18,6 +18,21 @@ const localDateTimeValue = (iso: string) => {
   const offset = date.getTimezoneOffset() * 60000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 };
+
+const defaultPomodoroState = (): PomodoroState => ({
+  title: "",
+  phase: "focus",
+  status: "idle",
+  focusMinutes: 25,
+  shortBreakMinutes: 5,
+  longBreakMinutes: 15,
+  longBreakEvery: 4,
+  sessionDurationSeconds: 25 * 60,
+  remainingSeconds: 25 * 60,
+  endsAt: null,
+  completedFocusToday: 0,
+  completedFocusDate: new Date().toISOString().slice(0, 10),
+});
 
 const LIVELY_MASCOT_SKILL_URL = "https://github.com/jingluoguo/lively-mascot/tree/master/skills/lively-mascot-image-model";
 export function SettingsWindow() {
@@ -48,6 +63,8 @@ export function SettingsWindow() {
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [editingReminder, setEditingReminder] = useState<Reminder | null>(null);
   const [reminderFeedback, setReminderFeedback] = useState<string | null>(null);
+  const [pomodoro, setPomodoro] = useState<PomodoroState>(defaultPomodoroState);
+  const [pomodoroNow, setPomodoroNow] = useState(Date.now());
   const visibilityShortcutButtonRef = useRef<HTMLButtonElement>(null);
   const dashboardShortcutButtonRef = useRef<HTMLButtonElement>(null);
   const shortcutsBeforeRecordingRef = useRef({
@@ -69,6 +86,7 @@ export function SettingsWindow() {
   const dashboardTabs: Array<{ id: DashboardTab; label: string; eyebrow: string }> = [
     { id: "appearance", label: text.appearanceTab, eyebrow: text.appearanceEyebrow },
     { id: "behavior", label: text.behaviorTab, eyebrow: text.behaviorEyebrow },
+    { id: "focus", label: text.focusTab, eyebrow: text.focusMode },
     { id: "reminders", label: text.remindersTab, eyebrow: text.remindersTitle },
     { id: "emotions", label: text.emotionsTab, eyebrow: text.emotionsEyebrow },
     { id: "about", label: text.aboutTab, eyebrow: text.aboutEyebrow },
@@ -97,6 +115,35 @@ export function SettingsWindow() {
     void listen<Reminder>("reminder-fired", () => { void listReminders().then(setReminders).catch(() => undefined); }).then((unlisten) => { stop = unlisten; });
     return () => stop?.();
   }, []);
+
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    void getPomodoro().then(setPomodoro).catch(() => undefined);
+    void listen<PomodoroState>("pomodoro-state", ({ payload }) => setPomodoro(payload)).then((unlisten) => { stop = unlisten; });
+    return () => stop?.();
+  }, []);
+
+  useEffect(() => {
+    if (pomodoro.status !== "running") return;
+    const timer = window.setInterval(() => setPomodoroNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [pomodoro.status]);
+
+  const runPomodoroAction = async (action: () => Promise<PomodoroState>) => {
+    try { setPomodoro(await action()); } catch { /* Keep the last scheduler state visible when native APIs are unavailable. */ }
+  };
+  const updatePomodoroDraft = <K extends "title" | "phase" | "sessionDurationSeconds">(key: K, value: PomodoroState[K]) => {
+    setPomodoro((current) => ({ ...current, [key]: value }));
+  };
+  const startPomodoroSession = async () => {
+    try {
+      const prepared = await savePomodoro({ ...pomodoro, status: "idle", endsAt: null, remainingSeconds: pomodoro.sessionDurationSeconds });
+      setPomodoro(prepared);
+      setPomodoro(await startPomodoro());
+    } catch {
+      // Keep the editable draft visible when native APIs are unavailable.
+    }
+  };
 
   const newReminder = () => {
     const runAt = new Date(Date.now() + 10 * 60 * 1000);
@@ -464,6 +511,17 @@ export function SettingsWindow() {
       : updateStatus.state === "paused" ? text.resumeUpdate
         : text.downloadUpdate;
   const canActOnUpdate = ["available", "downloading", "paused", "ready"].includes(updateStatus.state);
+  const phaseLabels: Record<PomodoroPhase, string> = {
+    focus: text.focusSession,
+    shortBreak: text.shortBreak,
+    longBreak: text.longBreak,
+  };
+  const remainingSeconds = pomodoro.status === "idle"
+    ? pomodoro.sessionDurationSeconds
+    : pomodoro.status === "running" && pomodoro.endsAt
+      ? Math.max(0, Math.ceil((pomodoro.endsAt * 1000 - pomodoroNow) / 1000))
+      : pomodoro.remainingSeconds;
+  const timerText = `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`;
 
   return <main className={`settings-shell dashboard-shell theme-${dashboardPreferences.theme}`}>
     <aside className="dashboard-sidebar">
@@ -495,7 +553,7 @@ export function SettingsWindow() {
     <section className="dashboard-workspace">
       <header className="dashboard-workspace-header">
         <div><span>{activeTabDefinition.eyebrow}</span><h1>{activeTabDefinition.label}</h1></div>
-        {activeTab !== "about" && activeTab !== "reminders" && <button className="reset-button" type="button" onClick={resetSettings}>{text.reset}</button>}
+        {activeTab !== "about" && activeTab !== "reminders" && activeTab !== "focus" && <button className="reset-button" type="button" onClick={resetSettings}>{text.reset}</button>}
       </header>
       <div className={`dashboard-scroll dashboard-scroll-${activeTab}`}>
         <div key={activeTab} id="dashboard-panel" className={`dashboard-panel dashboard-panel-${activeTab}`} role="tabpanel" aria-labelledby={`dashboard-tab-${activeTab}`}>
@@ -580,6 +638,26 @@ export function SettingsWindow() {
                 </div>
               </div>
             </section>
+          </div>}
+          {activeTab === "focus" && <div className="pomodoro-layout">
+            <section className={`pomodoro-hero phase-${pomodoro.phase}`}>
+              <div className="pomodoro-hero-copy"><span className="control-label">{text.focusMode}</span><h2>{pomodoro.title || phaseLabels[pomodoro.phase]}</h2><p>{pomodoro.status === "idle" ? text.focusHint : phaseLabels[pomodoro.phase]}</p></div>
+              <div className="pomodoro-timer" aria-live="polite"><strong>{timerText}</strong><span>{pomodoro.status === "running" ? text.focusRunning : pomodoro.status === "paused" ? text.focusPaused : text.focusReady}</span></div>
+            </section>
+            <div className="pomodoro-session-grid">
+              <section className={`pomodoro-session${pomodoro.status !== "idle" ? " locked" : ""}`} aria-labelledby="pomodoro-session-title">
+                <GroupHeading eyebrow={text.session} title={text.focusTitle} titleId="pomodoro-session-title" />
+                <label className="pomodoro-field"><span>{text.sessionTitle}</span><input disabled={pomodoro.status !== "idle"} value={pomodoro.title} maxLength={80} onChange={(event) => updatePomodoroDraft("title", event.target.value)} placeholder={text.sessionTitlePlaceholder} /></label>
+                <label className="pomodoro-field"><span>{text.sessionType}</span><select disabled={pomodoro.status !== "idle"} value={pomodoro.phase} onChange={(event) => updatePomodoroDraft("phase", event.target.value as PomodoroPhase)}><option value="focus">{text.focusSession}</option><option value="shortBreak">{text.shortBreak}</option><option value="longBreak">{text.longBreak}</option></select></label>
+                <label className="pomodoro-field"><span>{text.sessionDuration}</span><div className="pomodoro-duration-input"><input disabled={pomodoro.status !== "idle"} type="number" min="1" max="120" value={Math.ceil(pomodoro.sessionDurationSeconds / 60)} onChange={(event) => updatePomodoroDraft("sessionDurationSeconds", Math.max(1, Math.min(120, Number(event.target.value) || 1)) * 60)} /><small>{text.minutes}</small></div></label>
+                {pomodoro.status !== "idle" && <small className="pomodoro-lock-notice" role="status">{text.sessionLocked}</small>}
+                <div className="pomodoro-controls" aria-label={text.focusTitle}>
+                  <button type="button" className="pomodoro-primary" onClick={() => void (pomodoro.status === "idle" ? startPomodoroSession() : runPomodoroAction(pomodoro.status === "running" ? pausePomodoro : startPomodoro))}>{pomodoro.status === "running" ? text.pauseFocus : pomodoro.status === "paused" ? text.resumeFocus : text.startTimer}</button>
+                  {pomodoro.status !== "idle" && <button type="button" className="pomodoro-secondary" onClick={() => void runPomodoroAction(resetPomodoro)}>{text.resetTimer}</button>}
+                </div>
+              </section>
+              <section className="pomodoro-today" aria-label={text.focusToday}><span>{text.focusToday}</span><strong>{String(pomodoro.completedFocusToday).padStart(2, "0")}</strong><small>{text.focusSession}</small></section>
+            </div>
           </div>}
           {activeTab === "reminders" && <div className="reminders-layout settings-groups">
             <section className="settings-group reminders-overview">

@@ -93,8 +93,48 @@ struct Reminder {
 #[derive(Default)]
 struct ReminderManagerState {
     reminders: Mutex<Vec<Reminder>>,
+    pomodoro: Mutex<PomodoroState>,
     timer: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     data_path: Mutex<Option<PathBuf>>,
+    pomodoro_data_path: Mutex<Option<PathBuf>>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PomodoroState {
+    #[serde(default)]
+    title: String,
+    phase: String,
+    status: String,
+    focus_minutes: u32,
+    short_break_minutes: u32,
+    long_break_minutes: u32,
+    long_break_every: u32,
+    #[serde(default)]
+    session_duration_seconds: u32,
+    remaining_seconds: u32,
+    ends_at: Option<i64>,
+    completed_focus_today: u32,
+    completed_focus_date: String,
+}
+
+impl Default for PomodoroState {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            phase: "focus".into(),
+            status: "idle".into(),
+            focus_minutes: 25,
+            short_break_minutes: 5,
+            long_break_minutes: 15,
+            long_break_every: 4,
+            session_duration_seconds: 25 * 60,
+            remaining_seconds: 25 * 60,
+            ends_at: None,
+            completed_focus_today: 0,
+            completed_focus_date: Local::now().format("%F").to_string(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
@@ -326,6 +366,53 @@ fn reminders_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(directory.join("reminders.json"))
 }
 
+fn pomodoro_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let directory = app.path().app_data_dir().map_err(|error| error.to_string())?;
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    Ok(directory.join("pomodoro.json"))
+}
+
+fn pomodoro_phase_duration(pomodoro: &PomodoroState) -> u32 {
+    (match pomodoro.phase.as_str() {
+        "shortBreak" => pomodoro.short_break_minutes.clamp(1, 60),
+        "longBreak" => pomodoro.long_break_minutes.clamp(1, 120),
+        _ => pomodoro.focus_minutes.clamp(1, 120),
+    }) * 60
+}
+
+fn normalize_pomodoro(mut pomodoro: PomodoroState) -> PomodoroState {
+    if !matches!(pomodoro.phase.as_str(), "focus" | "shortBreak" | "longBreak") {
+        pomodoro.phase = "focus".into();
+    }
+    if !matches!(pomodoro.status.as_str(), "idle" | "running" | "paused") {
+        pomodoro.status = "idle".into();
+    }
+    pomodoro.focus_minutes = pomodoro.focus_minutes.clamp(1, 120);
+    pomodoro.short_break_minutes = pomodoro.short_break_minutes.clamp(1, 60);
+    pomodoro.long_break_minutes = pomodoro.long_break_minutes.clamp(1, 120);
+    pomodoro.long_break_every = pomodoro.long_break_every.clamp(2, 12);
+    pomodoro.title = pomodoro.title.trim().chars().take(80).collect();
+    let today = Local::now().format("%F").to_string();
+    if pomodoro.completed_focus_date != today {
+        pomodoro.completed_focus_date = today;
+        pomodoro.completed_focus_today = 0;
+    }
+    if pomodoro.status == "running" && pomodoro.ends_at.is_none() {
+        pomodoro.status = "paused".into();
+    }
+    if pomodoro.status != "running" {
+        pomodoro.ends_at = None;
+    }
+    if pomodoro.session_duration_seconds == 0 {
+        pomodoro.session_duration_seconds = pomodoro_phase_duration(&pomodoro);
+    }
+    pomodoro.session_duration_seconds = pomodoro.session_duration_seconds.clamp(60, 120 * 60);
+    if pomodoro.remaining_seconds == 0 && pomodoro.status != "running" {
+        pomodoro.remaining_seconds = pomodoro.session_duration_seconds;
+    }
+    pomodoro
+}
+
 fn save_reminders(state: &ReminderManagerState) -> Result<(), String> {
     let path = state
         .data_path
@@ -338,6 +425,45 @@ fn save_reminders(state: &ReminderManagerState) -> Result<(), String> {
     fs::write(path, contents).map_err(|error| error.to_string())
 }
 
+fn save_pomodoro_state(state: &ReminderManagerState) -> Result<(), String> {
+    let path = state
+        .pomodoro_data_path
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone()
+        .ok_or_else(|| "pomodoro storage is unavailable".to_string())?;
+    let pomodoro = state.pomodoro.lock().map_err(|error| error.to_string())?;
+    fs::write(path, serde_json::to_string_pretty(&*pomodoro).map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())
+}
+
+fn read_pomodoro<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<PomodoroState, String> {
+    let state = app.state::<ReminderManagerState>();
+    let mut pomodoro = state.pomodoro.lock().map_err(|error| error.to_string())?;
+    *pomodoro = normalize_pomodoro(pomodoro.clone());
+    Ok(pomodoro.clone())
+}
+
+fn advance_pomodoro(pomodoro: &mut PomodoroState, completed: bool) {
+    if pomodoro.phase == "focus" {
+        if completed {
+            pomodoro.completed_focus_today = pomodoro.completed_focus_today.saturating_add(1);
+        }
+        pomodoro.phase = if completed && pomodoro.completed_focus_today % pomodoro.long_break_every == 0 {
+            "longBreak".into()
+        } else {
+            "shortBreak".into()
+        };
+    } else {
+        pomodoro.phase = "focus".into();
+    }
+    pomodoro.status = "idle".into();
+    pomodoro.ends_at = None;
+    pomodoro.title.clear();
+    pomodoro.session_duration_seconds = pomodoro_phase_duration(pomodoro);
+    pomodoro.remaining_seconds = pomodoro.session_duration_seconds;
+}
+
 fn start_reminder_scheduler<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let state = app.state::<ReminderManagerState>();
     let has_enabled = state
@@ -348,7 +474,12 @@ fn start_reminder_scheduler<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                 .iter()
                 .any(|item| item.enabled && item.next_run_at.is_some())
         })
-        .unwrap_or(false);
+        .unwrap_or(false)
+        || state
+            .pomodoro
+            .lock()
+            .map(|pomodoro| pomodoro.status == "running" && pomodoro.ends_at.is_some())
+            .unwrap_or(false);
     if !has_enabled {
         return;
     }
@@ -390,11 +521,27 @@ fn start_reminder_scheduler<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                     }
                 }
             }
+            let mut pomodoro_completed = None;
+            if let Ok(mut pomodoro) = state.pomodoro.lock() {
+                *pomodoro = normalize_pomodoro(pomodoro.clone());
+                if pomodoro.status == "running" && pomodoro.ends_at.is_some_and(|end| end <= now) {
+                    advance_pomodoro(&mut pomodoro, true);
+                    pomodoro_completed = Some(pomodoro.clone());
+                }
+                if pomodoro.status == "running" && pomodoro.ends_at.is_some() {
+                    should_continue = true;
+                }
+            }
             if !fired.is_empty() {
                 let _ = save_reminders(&state);
                 for reminder in fired {
                     let _ = task_app.emit("reminder-fired", reminder);
                 }
+            }
+            if let Some(pomodoro) = pomodoro_completed {
+                let _ = save_pomodoro_state(&state);
+                let _ = task_app.emit("pomodoro-state", pomodoro.clone());
+                let _ = task_app.emit("pomodoro-completed", pomodoro);
             }
             if !should_continue {
                 if let Ok(mut slot) = state.timer.lock() {
@@ -446,6 +593,109 @@ fn delete_reminder<R: tauri::Runtime>(
     drop(reminders);
     save_reminders(&state)?;
     list_reminders(app)
+}
+
+#[tauri::command]
+fn get_pomodoro<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<PomodoroState, String> {
+    read_pomodoro(&app)
+}
+
+#[tauri::command]
+fn start_pomodoro<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<PomodoroState, String> {
+    let state = app.state::<ReminderManagerState>();
+    let next = {
+        let mut pomodoro = state.pomodoro.lock().map_err(|error| error.to_string())?;
+        *pomodoro = normalize_pomodoro(pomodoro.clone());
+        if pomodoro.status != "running" {
+            if pomodoro.status == "idle" {
+                pomodoro.remaining_seconds = pomodoro.session_duration_seconds;
+            }
+            pomodoro.remaining_seconds = pomodoro.remaining_seconds.max(1);
+            pomodoro.ends_at = Some(now_epoch() + i64::from(pomodoro.remaining_seconds));
+            pomodoro.status = "running".into();
+        }
+        pomodoro.clone()
+    };
+    save_pomodoro_state(&state)?;
+    start_reminder_scheduler(&app);
+    let _ = app.emit("pomodoro-state", next.clone());
+    Ok(next)
+}
+
+#[tauri::command]
+fn pause_pomodoro<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<PomodoroState, String> {
+    let state = app.state::<ReminderManagerState>();
+    let next = {
+        let mut pomodoro = state.pomodoro.lock().map_err(|error| error.to_string())?;
+        *pomodoro = normalize_pomodoro(pomodoro.clone());
+        if pomodoro.status == "running" {
+            pomodoro.remaining_seconds = (pomodoro.ends_at.unwrap_or(now_epoch()) - now_epoch()).max(1) as u32;
+            pomodoro.ends_at = None;
+            pomodoro.status = "paused".into();
+        }
+        pomodoro.clone()
+    };
+    save_pomodoro_state(&state)?;
+    let _ = app.emit("pomodoro-state", next.clone());
+    Ok(next)
+}
+
+#[tauri::command]
+fn reset_pomodoro<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<PomodoroState, String> {
+    let state = app.state::<ReminderManagerState>();
+    let next = {
+        let mut pomodoro = state.pomodoro.lock().map_err(|error| error.to_string())?;
+        *pomodoro = normalize_pomodoro(pomodoro.clone());
+        pomodoro.status = "idle".into();
+        pomodoro.ends_at = None;
+        pomodoro.remaining_seconds = pomodoro.session_duration_seconds;
+        pomodoro.clone()
+    };
+    save_pomodoro_state(&state)?;
+    let _ = app.emit("pomodoro-state", next.clone());
+    Ok(next)
+}
+
+#[tauri::command]
+fn skip_pomodoro<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<PomodoroState, String> {
+    let state = app.state::<ReminderManagerState>();
+    let next = {
+        let mut pomodoro = state.pomodoro.lock().map_err(|error| error.to_string())?;
+        *pomodoro = normalize_pomodoro(pomodoro.clone());
+        advance_pomodoro(&mut pomodoro, false);
+        pomodoro.clone()
+    };
+    save_pomodoro_state(&state)?;
+    let _ = app.emit("pomodoro-state", next.clone());
+    Ok(next)
+}
+
+#[tauri::command]
+fn save_pomodoro<R: tauri::Runtime>(app: tauri::AppHandle<R>, pomodoro: PomodoroState) -> Result<PomodoroState, String> {
+    let state = app.state::<ReminderManagerState>();
+    let next = {
+        let mut current = state.pomodoro.lock().map_err(|error| error.to_string())?;
+        let mut next = normalize_pomodoro(pomodoro);
+        // The scheduler owns elapsed time and completion counts. A new session may be prepared
+        // only while idle, so an active timer cannot be silently rewritten from the dashboard.
+        next.status = current.status.clone();
+        next.ends_at = current.ends_at;
+        next.completed_focus_today = current.completed_focus_today;
+        next.completed_focus_date = current.completed_focus_date.clone();
+        if next.status == "running" || next.status == "paused" {
+            next.phase = current.phase.clone();
+            next.title = current.title.clone();
+            next.session_duration_seconds = current.session_duration_seconds;
+            next.remaining_seconds = current.remaining_seconds;
+        } else {
+            next.remaining_seconds = next.session_duration_seconds;
+        }
+        *current = next.clone();
+        next
+    };
+    save_pomodoro_state(&state)?;
+    let _ = app.emit("pomodoro-state", next.clone());
+    Ok(next)
 }
 
 fn emit_update_status<R: tauri::Runtime>(app: &tauri::AppHandle<R>, status: &UpdateStatus) {
@@ -1626,6 +1876,7 @@ pub fn run() {
             app.manage(UpdateManagerState::default());
             let reminder_state = ReminderManagerState::default();
             let reminder_path = reminders_file(app.handle()).ok();
+            let pomodoro_path = pomodoro_file(app.handle()).ok();
             if let Some(path) = reminder_path.clone() {
                 if let Ok(contents) = fs::read_to_string(&path) {
                     if let Ok(items) = serde_json::from_str::<Vec<Reminder>>(&contents) {
@@ -1637,6 +1888,18 @@ pub fn run() {
             }
             if let Ok(mut path_slot) = reminder_state.data_path.lock() {
                 *path_slot = reminder_path;
+            }
+            if let Some(path) = pomodoro_path.clone() {
+                if let Ok(contents) = fs::read_to_string(&path) {
+                    if let Ok(saved) = serde_json::from_str::<PomodoroState>(&contents) {
+                        if let Ok(mut pomodoro) = reminder_state.pomodoro.lock() {
+                            *pomodoro = normalize_pomodoro(saved);
+                        }
+                    }
+                }
+            }
+            if let Ok(mut path_slot) = reminder_state.pomodoro_data_path.lock() {
+                *path_slot = pomodoro_path;
             }
             app.manage(reminder_state);
             start_reminder_scheduler(app.handle());
@@ -1777,7 +2040,13 @@ pub fn run() {
             install_custom_model,
             list_reminders,
             save_reminder,
-            delete_reminder
+            delete_reminder,
+            get_pomodoro,
+            start_pomodoro,
+            pause_pomodoro,
+            reset_pomodoro,
+            skip_pomodoro,
+            save_pomodoro
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1785,7 +2054,46 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_builtin_model_id, valid_model_id, validate_model_interactions, validate_model_source};
+    use super::{advance_pomodoro, is_builtin_model_id, normalize_pomodoro, valid_model_id, validate_model_interactions, validate_model_source, PomodoroState};
+
+    #[test]
+    fn completed_focus_advances_to_the_configured_long_break() {
+        let mut pomodoro = PomodoroState { long_break_every: 2, completed_focus_today: 1, ..PomodoroState::default() };
+        advance_pomodoro(&mut pomodoro, true);
+        assert_eq!(pomodoro.completed_focus_today, 2);
+        assert_eq!(pomodoro.phase, "longBreak");
+        assert_eq!(pomodoro.status, "idle");
+        assert!(pomodoro.title.is_empty());
+        assert_eq!(pomodoro.session_duration_seconds, pomodoro.long_break_minutes * 60);
+        assert_eq!(pomodoro.remaining_seconds, pomodoro.long_break_minutes * 60);
+    }
+
+    #[test]
+    fn invalid_saved_pomodoro_state_is_normalized() {
+        let pomodoro = normalize_pomodoro(PomodoroState {
+            title: "  A focused task  ".into(),
+            phase: "invalid".into(),
+            status: "unknown".into(),
+            focus_minutes: 0,
+            short_break_minutes: 99,
+            long_break_minutes: 0,
+            long_break_every: 1,
+            session_duration_seconds: 0,
+            remaining_seconds: 0,
+            ends_at: Some(1),
+            completed_focus_today: 0,
+            completed_focus_date: String::new(),
+        });
+        assert_eq!(pomodoro.phase, "focus");
+        assert_eq!(pomodoro.status, "idle");
+        assert_eq!(pomodoro.focus_minutes, 1);
+        assert_eq!(pomodoro.short_break_minutes, 60);
+        assert_eq!(pomodoro.long_break_every, 2);
+        assert_eq!(pomodoro.title, "A focused task");
+        assert_eq!(pomodoro.session_duration_seconds, 60);
+        assert_eq!(pomodoro.remaining_seconds, 60);
+        assert_eq!(pomodoro.ends_at, None);
+    }
 
     #[test]
     fn accepts_skill_style_model_source() {

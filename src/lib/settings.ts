@@ -2,7 +2,7 @@ import { emitTo } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, STORAGE_KEY, UI_STORAGE_KEY } from "../config";
-import type { DashboardPreferences, InteractionSettings, InteractionTrigger, MascotSettings, Reminder } from "../types";
+import type { DashboardPreferences, InteractionSettings, InteractionTrigger, MascotSettings, PomodoroState, Reminder } from "../types";
 import { isRecord } from "./author";
 const persistSettings = (settings: MascotSettings) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
@@ -156,4 +156,10 @@ const openSettingsWindow = async (settings: MascotSettings) => {
 const listReminders = () => invoke<Reminder[]>("list_reminders");
 const saveReminder = (reminder: Reminder) => invoke<Reminder[]>("save_reminder", { reminder });
 const deleteReminder = (id: string) => invoke<Reminder[]>("delete_reminder", { id });
-export { persistSettings, loadSettings, shortcutDisplay, shortcutFromKeyboardEvent, setGlobalShortcuts, petWindowSize, loadDashboardPreferences, openSettingsWindow, listReminders, saveReminder, deleteReminder };
+const getPomodoro = () => invoke<PomodoroState>("get_pomodoro");
+const startPomodoro = () => invoke<PomodoroState>("start_pomodoro");
+const pausePomodoro = () => invoke<PomodoroState>("pause_pomodoro");
+const resetPomodoro = () => invoke<PomodoroState>("reset_pomodoro");
+const skipPomodoro = () => invoke<PomodoroState>("skip_pomodoro");
+const savePomodoro = (pomodoro: PomodoroState) => invoke<PomodoroState>("save_pomodoro", { pomodoro });
+export { persistSettings, loadSettings, shortcutDisplay, shortcutFromKeyboardEvent, setGlobalShortcuts, petWindowSize, loadDashboardPreferences, openSettingsWindow, listReminders, saveReminder, deleteReminder, getPomodoro, startPomodoro, pausePomodoro, resetPomodoro, skipPomodoro, savePomodoro };

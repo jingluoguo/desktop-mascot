@@ -46,7 +46,7 @@ type ModelAction = "export" | "delete";
 
 type DashboardTheme = "light" | "dark";
 type DashboardLocale = "zh-CN" | "en";
-type DashboardTab = "appearance" | "behavior" | "reminders" | "emotions" | "about";
+type DashboardTab = "appearance" | "behavior" | "focus" | "reminders" | "emotions" | "about";
 type ReminderSchedule = "once" | "daily" | "weekdays" | "interval";
 type Reminder = {
   id: string;
@@ -59,6 +59,22 @@ type Reminder = {
   systemNotification: boolean;
   nextRunAt: number | null;
   lastFiredAt: number | null;
+};
+type PomodoroPhase = "focus" | "shortBreak" | "longBreak";
+type PomodoroStatus = "idle" | "running" | "paused";
+type PomodoroState = {
+  title: string;
+  phase: PomodoroPhase;
+  status: PomodoroStatus;
+  focusMinutes: number;
+  shortBreakMinutes: number;
+  longBreakMinutes: number;
+  longBreakEvery: number;
+  sessionDurationSeconds: number;
+  remainingSeconds: number;
+  endsAt: number | null;
+  completedFocusToday: number;
+  completedFocusDate: string;
 };
 type DashboardPreferences = {
   theme: DashboardTheme;
@@ -110,4 +126,4 @@ type AuthorData = {
   tags: AuthorTag[];
   works: AuthorWork[];
 };
-export type { MascotSettings, InteractionTrigger, InteractionSettings, InteractionCapabilities, ShortcutSettingKey, LivelyMascotApi, CustomModelSummary, CustomModelSources, ModelAction, DashboardTheme, DashboardLocale, DashboardTab, DashboardPreferences, AppUpdateStatus, AuthorLink, AuthorTag, AuthorWork, AuthorData, ReminderSchedule, Reminder };
+export type { MascotSettings, InteractionTrigger, InteractionSettings, InteractionCapabilities, ShortcutSettingKey, LivelyMascotApi, CustomModelSummary, CustomModelSources, ModelAction, DashboardTheme, DashboardLocale, DashboardTab, DashboardPreferences, AppUpdateStatus, AuthorLink, AuthorTag, AuthorWork, AuthorData, ReminderSchedule, Reminder, PomodoroPhase, PomodoroStatus, PomodoroState };
