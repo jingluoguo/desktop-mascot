@@ -34,6 +34,7 @@ const interactionTriggers: Array<{ id: InteractionTrigger; defaultEmotion: strin
   { id: "drag", defaultEmotion: "38" },
 ];
 const MAX_MASCOT_SIZE = 160;
+const CONTEXT_MENU_WIDTH = 220;
 
 const characters = [
   { id: "ghost", name: { "zh-CN": "幽灵", en: "Ghost" }, symbol: "G" },
@@ -46,6 +47,8 @@ const characters = [
 const uiText = {
   "zh-CN": {
     dashboardLabel: "仪表盘",
+    hidePet: "隐藏",
+    quitApp: "退出",
     subtitle: "让每一刻，都有一个轻盈的陪伴。",
     appearanceTab: "角色与外观",
     behaviorTab: "行为与快捷键",
@@ -80,6 +83,9 @@ const uiText = {
     interactionNone: "不触发反应",
     interactionUnavailable: "当前模型未声明此反应，将保持当前状态",
     quickInteractions: "快捷反应",
+    scrollQuickReactions: "滚动快捷反应",
+    scrollLeft: "向左滚动",
+    scrollRight: "向右滚动",
     quickHappy: "开心",
     quickCurious: "好奇",
     quickLove: "心动",
@@ -160,6 +166,10 @@ const uiText = {
     focusRunning: "进行中",
     focusPaused: "已暂停",
     focusReady: "准备开始",
+    petReminderLabel: "提醒",
+    petAriaLabel: "可拖拽的桌面宠物",
+    pomodoroBreakStarted: "专注完成，休息一下吧",
+    pomodoroFocusStarted: "休息结束，准备继续专注",
     session: "本轮",
     sessionTitle: "这一轮要做什么",
     sessionTitlePlaceholder: "例如：整理项目方案",
@@ -234,6 +244,8 @@ const uiText = {
   },
   en: {
     dashboardLabel: "Dashboard",
+    hidePet: "Hide",
+    quitApp: "Quit",
     subtitle: "A little companion for every moment.",
     appearanceTab: "Character & Style",
     behaviorTab: "Behavior & Shortcuts",
@@ -268,6 +280,9 @@ const uiText = {
     interactionNone: "No reaction",
     interactionUnavailable: "This model has not declared this reaction; the current state is kept",
     quickInteractions: "Quick reactions",
+    scrollQuickReactions: "Scroll quick reactions",
+    scrollLeft: "Scroll left",
+    scrollRight: "Scroll right",
     quickHappy: "Happy",
     quickCurious: "Curious",
     quickLove: "Love",
@@ -348,6 +363,10 @@ const uiText = {
     focusRunning: "Running",
     focusPaused: "Paused",
     focusReady: "Ready",
+    petReminderLabel: "Reminder",
+    petAriaLabel: "Draggable desktop mascot",
+    pomodoroBreakStarted: "Time for a break",
+    pomodoroFocusStarted: "Ready to focus again",
     session: "SESSION",
     sessionTitle: "What are you doing?",
     sessionTitlePlaceholder: "For example: Draft the project plan",
@@ -444,5 +463,5 @@ const defaultThemes: Record<string, Pick<MascotSettings, "bodyColor" | "outlineC
   ghost: { bodyColor: "#bdeef2", outlineColor: "#23434d", accentColor: "#a9d9ff" },
   jelly: { bodyColor: "#f29cc2", outlineColor: "#5a243e", accentColor: "#ffe0a8" },
 };
-export { STORAGE_KEY, SETTINGS_SCHEMA_VERSION, UI_STORAGE_KEY, AUTHOR_DATA_CACHE_KEY, AUTHOR_DATA_URL, DEFAULT_SETTINGS, MAX_MASCOT_SIZE, interactionTriggers, characters, uiText, englishEmotionGroups, workTypeName, workTypeClass, defaultThemes };
+export { STORAGE_KEY, SETTINGS_SCHEMA_VERSION, UI_STORAGE_KEY, AUTHOR_DATA_CACHE_KEY, AUTHOR_DATA_URL, DEFAULT_SETTINGS, MAX_MASCOT_SIZE, CONTEXT_MENU_WIDTH, interactionTriggers, characters, uiText, englishEmotionGroups, workTypeName, workTypeClass, defaultThemes };
 export type { UiCopy };

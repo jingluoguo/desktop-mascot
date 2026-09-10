@@ -5,9 +5,9 @@ import { PhysicalPosition } from "@tauri-apps/api/dpi";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import type { MascotInstance } from "lively-mascot";
-import { MAX_MASCOT_SIZE } from "../config";
-import type { InteractionTrigger, MascotSettings, PomodoroState, Reminder } from "../types";
-import { getPomodoro, loadSettings, openSettingsWindow, persistSettings, petWindowSize, setGlobalShortcuts } from "../lib/settings";
+import { CONTEXT_MENU_WIDTH, MAX_MASCOT_SIZE, uiText } from "../config";
+import type { DashboardPreferences, InteractionTrigger, MascotSettings, PomodoroState, Reminder } from "../types";
+import { getPomodoro, loadDashboardPreferences, loadSettings, openSettingsWindow, persistSettings, petWindowSize, setGlobalShortcuts } from "../lib/settings";
 import { getLivelyMascot } from "../lib/mascotRuntime";
 import { checkForAppUpdate } from "../lib/appUpdates";
 
@@ -20,7 +20,6 @@ const revealDockedPet = () => invoke<boolean>("reveal_main_window").catch(() => 
 const EDGE_DOCK_RETURN_DELAY = 6000;
 const DRAG_EMOTION_REPEAT_DELAY = 1800;
 const DRAG_MOVEMENT_THRESHOLD = 4;
-const CONTEXT_MENU_WIDTH = 220;
 const CONTEXT_MENU_HEIGHT = 208;
 
 export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { modelRegistryVersion: number; onModelRegistryReload: () => Promise<void> }) {
@@ -66,9 +65,12 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   } | null>(null);
   const [settings, setSettings] = useState(loadSettings);
   const settingsRef = useRef(settings);
+  const [locale, setLocale] = useState(() => loadDashboardPreferences().locale);
+  const localeRef = useRef(locale);
   const [activeEmotion, setActiveEmotion] = useState(settings.emotion);
   const [activeReminderTitle, setActiveReminderTitle] = useState<string | null>(null);
   settingsRef.current = settings;
+  localeRef.current = locale;
 
   useEffect(() => {
     if (!import.meta.env.PROD) return;
@@ -358,6 +360,10 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
         listen("mascot-settings-request", () => {
           void emitTo("settings", "mascot-settings-state", settingsRef.current);
         }),
+        listen<DashboardPreferences>("dashboard-preferences-update", ({ payload }) => {
+          localeRef.current = payload.locale;
+          setLocale(payload.locale);
+        }),
         listen("open-settings", () => {
           void openSettingsWindow(settingsRef.current);
         }),
@@ -381,10 +387,13 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
         }),
         listen("mascot-context-menu-request", () => {
           const hasAccessories = Object.keys(mascotRef.current?.getAccessories() ?? {}).length > 0;
+          const preferences = loadDashboardPreferences();
           void emitTo("context-menu", "mascot-context-menu-state", {
             hasAccessories,
             globalShortcut: settingsRef.current.globalShortcut,
             dashboardShortcut: settingsRef.current.dashboardShortcut,
+            locale: preferences.locale,
+            theme: preferences.theme,
           });
         }),
         listen<Reminder>("reminder-fired", ({ payload }) => {
@@ -432,7 +441,8 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
             if (reminderSequenceRef.current !== reminderSequence) return;
             if (reminderResetTimerRef.current !== null) window.clearTimeout(reminderResetTimerRef.current);
             const hasBreakStarted = payload.phase === "shortBreak" || payload.phase === "longBreak";
-            setActiveReminderTitle(hasBreakStarted ? "专注完成，休息一下吧" : "休息结束，准备继续专注");
+            const copy = uiText[localeRef.current];
+            setActiveReminderTitle(hasBreakStarted ? copy.pomodoroBreakStarted : copy.pomodoroFocusStarted);
             setActiveEmotion(hasBreakStarted ? "30" : "01");
             reminderResetTimerRef.current = window.setTimeout(() => {
               if (reminderSequenceRef.current !== reminderSequence) return;
@@ -748,8 +758,8 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   };
 
   return <main className="pet-window" onContextMenu={openContextMenu}>
-    <div ref={hostRef} className="pet-host" aria-label="可拖拽的桌面宠物" />
-    {activeReminderTitle && <div className="pet-reminder-toast" role="status"><span>提醒</span><strong>{activeReminderTitle}</strong></div>}
+    <div ref={hostRef} className="pet-host" aria-label={uiText[locale].petAriaLabel} />
+    {activeReminderTitle && <div className="pet-reminder-toast" role="status"><span>{uiText[locale].petReminderLabel}</span><strong>{activeReminderTitle}</strong></div>}
   </main>;
 }
 

@@ -1,7 +1,7 @@
 import { emitTo } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, STORAGE_KEY, UI_STORAGE_KEY } from "../config";
+import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, STORAGE_KEY, UI_STORAGE_KEY, uiText } from "../config";
 import type { DashboardPreferences, InteractionSettings, InteractionTrigger, MascotSettings, PomodoroState, Reminder } from "../types";
 import { isRecord } from "./author";
 const persistSettings = (settings: MascotSettings) => {
@@ -125,7 +125,7 @@ const openSettingsWindow = async (settings: MascotSettings) => {
     // Window commands can fail independently when the app was backgrounded.
     // Keep restoring the window even if it is already visible or maximized.
     await settingsWindow.unminimize().catch(() => undefined);
-    await settingsWindow.setTitle("仪表盘").catch(() => undefined);
+    await settingsWindow.setTitle(uiText[loadDashboardPreferences().locale].dashboardLabel).catch(() => undefined);
     await settingsWindow.show().catch(() => undefined);
     await settingsWindow.maximize().catch(() => undefined);
     await settingsWindow.setFocus().catch(() => undefined);
@@ -134,7 +134,7 @@ const openSettingsWindow = async (settings: MascotSettings) => {
   }
   settingsWindow = new WebviewWindow("settings", {
     url: "/?view=settings",
-    title: "仪表盘",
+    title: uiText[loadDashboardPreferences().locale].dashboardLabel,
     width: 820,
     height: 640,
     minWidth: 720,

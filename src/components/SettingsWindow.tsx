@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { relaunch } from "@tauri-apps/plugin-process";
 import type { EmotionDefinition, MascotInstance, ModelCapabilities, ViewMode } from "lively-mascot";
 import { AUTHOR_DATA_CACHE_KEY, AUTHOR_DATA_URL, characters, DEFAULT_SETTINGS, defaultThemes, englishEmotionGroups, interactionTriggers, UI_STORAGE_KEY, uiText, workTypeClass, workTypeName } from "../config";
@@ -9,7 +10,7 @@ import { loadCachedAuthorData, openExternalUrl, parseAuthorData } from "../lib/a
 import { checkForAppUpdate as resolveAppUpdate } from "../lib/appUpdates";
 import { downloadModelPackage, loadCustomModels, modelFilesFromSelection, modelImportErrorText } from "../lib/customModels";
 import { getLivelyMascot } from "../lib/mascotRuntime";
-import { deleteReminder, getPomodoro, listReminders, loadDashboardPreferences, loadSettings, pausePomodoro, persistSettings, resetPomodoro, savePomodoro, saveReminder, setGlobalShortcuts, shortcutDisplay, shortcutFromKeyboardEvent, startPomodoro } from "../lib/settings";
+import { deleteReminder, getPomodoro, listReminders, loadDashboardPreferences, loadSettings, pausePomodoro, persistSettings, resetPomodoro, savePomodoro, saveReminder, setGlobalShortcuts, shortcutDisplay, shortcutFromKeyboardEvent, skipPomodoro, startPomodoro } from "../lib/settings";
 import { CharacterPreview } from "./CharacterPreview";
 import { GroupHeading, SegmentedControl, ToggleRow } from "./DashboardControls";
 
@@ -247,7 +248,8 @@ export function SettingsWindow() {
   useEffect(() => {
     document.documentElement.lang = dashboardPreferences.locale;
     document.title = text.dashboardLabel;
-  }, [dashboardPreferences.locale]);
+    void getCurrentWindow().setTitle(text.dashboardLabel).catch(() => undefined);
+  }, [dashboardPreferences.locale, text.dashboardLabel]);
 
   useEffect(() => {
     if (!pendingModelAction) return;
@@ -460,6 +462,7 @@ export function SettingsWindow() {
     const next = { ...dashboardPreferences, [key]: value };
     setDashboardPreferences(next);
     localStorage.setItem(UI_STORAGE_KEY, JSON.stringify(next));
+    void emitTo("main", "dashboard-preferences-update", next).catch(() => undefined);
   };
 
   const resetSettings = () => {
@@ -653,7 +656,7 @@ export function SettingsWindow() {
                 {pomodoro.status !== "idle" && <small className="pomodoro-lock-notice" role="status">{text.sessionLocked}</small>}
                 <div className="pomodoro-controls" aria-label={text.focusTitle}>
                   <button type="button" className="pomodoro-primary" onClick={() => void (pomodoro.status === "idle" ? startPomodoroSession() : runPomodoroAction(pomodoro.status === "running" ? pausePomodoro : startPomodoro))}>{pomodoro.status === "running" ? text.pauseFocus : pomodoro.status === "paused" ? text.resumeFocus : text.startTimer}</button>
-                  {pomodoro.status !== "idle" && <button type="button" className="pomodoro-secondary" onClick={() => void runPomodoroAction(resetPomodoro)}>{text.resetTimer}</button>}
+                  {pomodoro.status !== "idle" && <><button type="button" className="pomodoro-secondary" onClick={() => void runPomodoroAction(resetPomodoro)}>{text.resetTimer}</button><button type="button" className="pomodoro-secondary" onClick={() => void runPomodoroAction(skipPomodoro)}>{text.skipFocus}</button></>}
                 </div>
               </section>
               <section className="pomodoro-today" aria-label={text.focusToday}><span>{text.focusToday}</span><strong>{String(pomodoro.completedFocusToday).padStart(2, "0")}</strong><small>{text.focusSession}</small></section>
