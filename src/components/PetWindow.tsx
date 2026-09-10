@@ -15,11 +15,13 @@ const MODEL_HIT_SELECTOR = [
   ".pet-host .lively-mascot .lively-body:not(.lively-body--custom-model)",
   ".pet-host .lively-mascot svg",
 ].join(", ");
+const INTERACTIVE_HIT_SELECTOR = `${MODEL_HIT_SELECTOR}, .pet-reminder-toast`;
 
 const revealDockedPet = () => invoke<boolean>("reveal_main_window").catch(() => false);
 const EDGE_DOCK_RETURN_DELAY = 6000;
 const DRAG_EMOTION_REPEAT_DELAY = 1800;
 const DRAG_MOVEMENT_THRESHOLD = 4;
+const HOVER_SUPPRESS_AFTER_ACK = 300;
 const CONTEXT_MENU_HEIGHT = 208;
 
 export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { modelRegistryVersion: number; onModelRegistryReload: () => Promise<void> }) {
@@ -27,7 +29,6 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   const mascotRef = useRef<MascotInstance | null>(null);
   const interactionResetTimerRef = useRef<number | null>(null);
   const clickTimerRef = useRef<number | null>(null);
-  const reminderResetTimerRef = useRef<number | null>(null);
   const reminderActiveRef = useRef(false);
   const reminderSequenceRef = useRef(0);
   const pomodoroRef = useRef<PomodoroState | null>(null);
@@ -91,6 +92,17 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
       void invoke<boolean>("redock_main_window").catch(() => undefined);
       edgeDockReturnTimerRef.current = null;
     }, EDGE_DOCK_RETURN_DELAY);
+  };
+
+  // Acknowledging a reminder is an explicit dismissal, so a revealed pet goes back to the
+  // edge right away. Waiting out the interaction delay here lets a hover reaction on the
+  // model (the pointer is already sitting on it) push the retraction back over and over.
+  const retractDockedPet = () => {
+    if (edgeDockReturnTimerRef.current !== null) {
+      window.clearTimeout(edgeDockReturnTimerRef.current);
+      edgeDockReturnTimerRef.current = null;
+    }
+    void invoke<boolean>("redock_main_window").catch(() => undefined);
   };
 
   const pomodoroEmotion = () => {
@@ -411,17 +423,10 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
           stopDragEmotion();
           void revealDockedPet().then(() => {
             if (reminderSequenceRef.current !== reminderSequence) return;
-            if (reminderResetTimerRef.current !== null) window.clearTimeout(reminderResetTimerRef.current);
+            void getCurrentWindow().setIgnoreCursorEvents(false).catch(() => undefined);
+            ignoreCursorEventsRef.current = false;
             setActiveReminderTitle(payload.title);
             setActiveEmotion(payload.emotion || settingsRef.current.emotion);
-            reminderResetTimerRef.current = window.setTimeout(() => {
-              if (reminderSequenceRef.current !== reminderSequence) return;
-              setActiveReminderTitle(null);
-              reminderActiveRef.current = false;
-              restorePresentation();
-              reminderResetTimerRef.current = null;
-            }, 6000);
-            if (!payload.systemNotification) scheduleEdgeDockReturn();
           });
         }),
         listen<PomodoroState>("pomodoro-state", ({ payload }) => {
@@ -439,19 +444,12 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
           stopDragEmotion();
           void revealDockedPet().then(() => {
             if (reminderSequenceRef.current !== reminderSequence) return;
-            if (reminderResetTimerRef.current !== null) window.clearTimeout(reminderResetTimerRef.current);
+            void getCurrentWindow().setIgnoreCursorEvents(false).catch(() => undefined);
+            ignoreCursorEventsRef.current = false;
             const hasBreakStarted = payload.phase === "shortBreak" || payload.phase === "longBreak";
             const copy = uiText[localeRef.current];
             setActiveReminderTitle(hasBreakStarted ? copy.pomodoroBreakStarted : copy.pomodoroFocusStarted);
             setActiveEmotion(hasBreakStarted ? "30" : "01");
-            reminderResetTimerRef.current = window.setTimeout(() => {
-              if (reminderSequenceRef.current !== reminderSequence) return;
-              setActiveReminderTitle(null);
-              reminderActiveRef.current = false;
-              restorePresentation();
-              reminderResetTimerRef.current = null;
-            }, 6000);
-            scheduleEdgeDockReturn();
           });
         }),
       ]);
@@ -673,7 +671,8 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
       if (dragStateRef.current) return;
       const target = event.target instanceof Element ? event.target : null;
       const pointerOverMascot = Boolean(target?.closest(MODEL_HIT_SELECTOR));
-      setCursorEventsIgnored(!pointerOverMascot);
+      const pointerOverInteractiveElement = Boolean(target?.closest(INTERACTIVE_HIT_SELECTOR));
+      setCursorEventsIgnored(!pointerOverInteractiveElement);
       updateHoverState(pointerOverMascot);
     };
     const hitTestCursor = async () => {
@@ -693,7 +692,8 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
           (cursor.y - windowPosition.y) / scaleFactor,
         );
         const pointerOverMascot = Boolean(element?.closest(MODEL_HIT_SELECTOR));
-        setCursorEventsIgnored(!pointerOverMascot);
+        const pointerOverInteractiveElement = Boolean(element?.closest(INTERACTIVE_HIT_SELECTOR));
+        setCursorEventsIgnored(!pointerOverInteractiveElement);
         updateHoverState(pointerOverMascot);
       } catch {
         // Browser previews do not expose native cursor coordinates.
@@ -739,7 +739,6 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   useEffect(() => () => {
     if (interactionResetTimerRef.current !== null) window.clearTimeout(interactionResetTimerRef.current);
     if (clickTimerRef.current !== null) window.clearTimeout(clickTimerRef.current);
-    if (reminderResetTimerRef.current !== null) window.clearTimeout(reminderResetTimerRef.current);
     if (edgeDockReturnTimerRef.current !== null) window.clearTimeout(edgeDockReturnTimerRef.current);
     if (scaleFrameRef.current !== null) window.cancelAnimationFrame(scaleFrameRef.current);
     if (dragFrameRef.current !== null) window.cancelAnimationFrame(dragFrameRef.current);
@@ -757,9 +756,22 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
     }
   };
 
+  const acknowledgeReminder = () => {
+    reminderSequenceRef.current += 1;
+    setActiveReminderTitle(null);
+    reminderActiveRef.current = false;
+    // The cursor is still resting on the pet when the toast gets dismissed, and the
+    // drag/hover handlers would replay the hover reaction right away. Treat that hover
+    // as already handled so the acknowledgement restores the presentation immediately.
+    pointerOverMascotRef.current = true;
+    ignoreHoverUntilRef.current = performance.now() + HOVER_SUPPRESS_AFTER_ACK;
+    restorePresentation();
+    retractDockedPet();
+  };
+
   return <main className="pet-window" onContextMenu={openContextMenu}>
     <div ref={hostRef} className="pet-host" aria-label={uiText[locale].petAriaLabel} />
-    {activeReminderTitle && <div className="pet-reminder-toast" role="status"><span>{uiText[locale].petReminderLabel}</span><strong>{activeReminderTitle}</strong></div>}
+    {activeReminderTitle && <div className="pet-reminder-toast" role="alert"><span>{uiText[locale].petReminderLabel}</span><strong>{activeReminderTitle}</strong><button type="button" onClick={acknowledgeReminder}>{uiText[locale].acknowledgeReminder}</button></div>}
   </main>;
 }
 
