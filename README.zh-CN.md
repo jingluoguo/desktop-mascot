@@ -109,7 +109,7 @@ public/              Vite 静态资源
 }
 ```
 
-可用触发方式为 `click`、`doubleClick`、`hover` 和 `drag`。表情 ID 对应 `lively-mascot` 的表情定义，也可以是模型包定义的自定义表情。
+可用触发方式为 `click`、`doubleClick`、`hover` 和 `drag`。表情 ID 取自 `lively-mascot` 的 `emotions` 注册表，也可以是模型包定义的自定义表情。上面用到的四个 ID 分别是 `10`（开心）、`11`（好奇）、`16`（心动）、`38`（灵光一现）；内置注册表共 40 个表情，ID 为 `00`–`39` 的两位数字串。
 
 ## 许可
 

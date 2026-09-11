@@ -109,7 +109,7 @@ A model package can also declare the interaction reactions it supports in `model
 }
 ```
 
-The available triggers are `click`, `doubleClick`, `hover`, and `drag`. Expression IDs correspond to the expression definitions in `lively-mascot`, and may also be custom expressions defined by the model package.
+The available triggers are `click`, `doubleClick`, `hover`, and `drag`. Expression IDs are the keys of `lively-mascot`'s `emotions` registry, and may also be custom expressions defined by the model package. The four IDs used above are `10` (Happy), `11` (Curious), `16` (Love), and `38` (Eureka); the built-in registry holds 40 expressions whose IDs are the two-digit strings `00`–`39`.
 
 ## License
 
