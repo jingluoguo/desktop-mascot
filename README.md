@@ -50,6 +50,12 @@ yarn tauri build
 
 构建产物由 Tauri 输出到 `src-tauri/target/release/bundle/`。
 
+## 项目落地页
+
+落地页位于 [`landing/`](landing/)，是一个不依赖构建步骤的静态站点。提交到 `master` 后，GitHub Actions 会自动发布它。
+
+首次发布时，请在仓库 **Settings → Pages → Build and deployment** 中将 Source 设为 **GitHub Actions**。随后可通过 `https://jingluoguo.github.io/desktop-mascot/` 访问。
+
 ## 应用内更新
 
 应用发布版启动时会先读取 `AUTHOR_DATA_URL` 中 `desktop-mascot` 项的版本。只有远程版本高于当前版本时，才会继续检查 `jingluoguo/desktop-mascot` 的最新 GitHub Release；存在当前平台经过签名的更新包时，应用会自动下载，下载完成后由用户确认重启并安装。
