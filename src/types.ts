@@ -1,4 +1,9 @@
 import type { createMascot as CreateMascot, EmotionDefinition, ViewMode } from "lively-mascot";
+
+type InteractionTrigger = "click" | "doubleClick" | "hover" | "drag";
+type InteractionSettings = Record<InteractionTrigger, string>;
+type InteractionCapabilities = Partial<Record<InteractionTrigger, string[]>>;
+
 type MascotSettings = {
   character: string;
   emotion: string;
@@ -6,6 +11,8 @@ type MascotSettings = {
   viewMode: ViewMode;
   outlineVisible: boolean;
   followCursor: boolean;
+  edgeDock: boolean;
+  edgeDockThreshold: number;
   bodyColor: string;
   outlineColor: string;
   accentColor: string;
@@ -13,6 +20,7 @@ type MascotSettings = {
   dashboardShortcut: string;
   faceVariant: "default" | "simple" | "dot";
   accessories: Record<string, boolean>;
+  interactions: InteractionSettings;
 };
 
 type ShortcutSettingKey = "globalShortcut" | "dashboardShortcut";
@@ -28,6 +36,7 @@ type LivelyMascotApi = {
     rig?: { blink?: boolean; gaze?: boolean; hop?: boolean; spin?: boolean };
     accessories?: Record<string, { default: boolean; actions: string[] }>;
     presentation?: { labels?: { zh?: string; en?: string }; icon?: string; theme?: { body?: string; outline?: string; accent?: string } };
+    interactions?: InteractionCapabilities;
   }>;
 };
 
@@ -37,7 +46,7 @@ type ModelAction = "export" | "delete";
 
 type DashboardTheme = "light" | "dark";
 type DashboardLocale = "zh-CN" | "en";
-type DashboardTab = "appearance" | "behavior" | "reminders" | "emotions" | "about";
+type DashboardTab = "appearance" | "behavior" | "focus" | "reminders" | "emotions" | "about";
 type ReminderSchedule = "once" | "daily" | "weekdays" | "interval";
 type Reminder = {
   id: string;
@@ -50,6 +59,22 @@ type Reminder = {
   systemNotification: boolean;
   nextRunAt: number | null;
   lastFiredAt: number | null;
+};
+type PomodoroPhase = "focus" | "shortBreak" | "longBreak";
+type PomodoroStatus = "idle" | "running" | "paused";
+type PomodoroState = {
+  title: string;
+  phase: PomodoroPhase;
+  status: PomodoroStatus;
+  focusMinutes: number;
+  shortBreakMinutes: number;
+  longBreakMinutes: number;
+  longBreakEvery: number;
+  sessionDurationSeconds: number;
+  remainingSeconds: number;
+  endsAt: number | null;
+  completedFocusToday: number;
+  completedFocusDate: string;
 };
 type DashboardPreferences = {
   theme: DashboardTheme;
@@ -101,4 +126,4 @@ type AuthorData = {
   tags: AuthorTag[];
   works: AuthorWork[];
 };
-export type { MascotSettings, ShortcutSettingKey, LivelyMascotApi, CustomModelSummary, CustomModelSources, ModelAction, DashboardTheme, DashboardLocale, DashboardTab, DashboardPreferences, AppUpdateStatus, AuthorLink, AuthorTag, AuthorWork, AuthorData, ReminderSchedule, Reminder };
+export type { MascotSettings, InteractionTrigger, InteractionSettings, InteractionCapabilities, ShortcutSettingKey, LivelyMascotApi, CustomModelSummary, CustomModelSources, ModelAction, DashboardTheme, DashboardLocale, DashboardTab, DashboardPreferences, AppUpdateStatus, AuthorLink, AuthorTag, AuthorWork, AuthorData, ReminderSchedule, Reminder, PomodoroPhase, PomodoroStatus, PomodoroState };

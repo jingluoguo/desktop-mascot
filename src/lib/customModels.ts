@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import type { UiCopy } from "../config";
-import type { CustomModelSources, CustomModelSummary } from "../types";
+import type { CustomModelSources, CustomModelSummary, InteractionCapabilities, InteractionTrigger } from "../types";
 import { getLivelyMascot } from "./mascotRuntime";
 
 const loadCustomModels = async (): Promise<CustomModelSummary[]> => {
@@ -33,7 +33,9 @@ const loadCustomModels = async (): Promise<CustomModelSummary[]> => {
       script.dataset.livelyCustomModel = summary.id;
       script.text = sources.model_js;
       document.head.appendChild(script);
-      if (!getLivelyMascot()?.models?.[summary.id]) throw new Error("model script did not register its manifest id");
+      const registeredModel = getLivelyMascot()?.models?.[summary.id];
+      if (!registeredModel) throw new Error("model script did not register its manifest id");
+      registeredModel.interactions = interactionCapabilitiesFromManifest(sources.model_json);
       loadedSummaries.push(summary);
     } catch {
       document.getElementById(`lively-custom-model-css-${summary.id}`)?.remove();
@@ -42,6 +44,24 @@ const loadCustomModels = async (): Promise<CustomModelSummary[]> => {
     }
   }
   return loadedSummaries;
+};
+
+const interactionTriggers: InteractionTrigger[] = ["click", "doubleClick", "hover", "drag"];
+
+const interactionCapabilitiesFromManifest = (source: string): InteractionCapabilities | undefined => {
+  try {
+    const interactions = (JSON.parse(source) as { interactions?: unknown }).interactions;
+    if (!interactions || typeof interactions !== "object" || Array.isArray(interactions)) return undefined;
+    const capabilities = Object.fromEntries(interactionTriggers.flatMap((trigger) => {
+      const actions = (interactions as Record<string, unknown>)[trigger];
+      if (!Array.isArray(actions)) return [];
+      const supported = actions.filter((action): action is string => typeof action === "string" && action.length > 0 && action.length <= 40);
+      return supported.length > 0 ? [[trigger, supported]] : [];
+    })) as InteractionCapabilities;
+    return Object.keys(capabilities).length > 0 ? capabilities : undefined;
+  } catch {
+    return undefined;
+  }
 };
 
 const MODEL_PACKAGE_EXTENSION = ".livelymodel";

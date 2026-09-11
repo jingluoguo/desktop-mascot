@@ -1,22 +1,39 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { relaunch } from "@tauri-apps/plugin-process";
 import type { EmotionDefinition, MascotInstance, ModelCapabilities, ViewMode } from "lively-mascot";
-import { AUTHOR_DATA_CACHE_KEY, AUTHOR_DATA_URL, characters, DEFAULT_SETTINGS, defaultThemes, englishEmotionGroups, UI_STORAGE_KEY, uiText, workTypeClass, workTypeName } from "../config";
-import type { AppUpdateStatus, AuthorData, AuthorTag, CustomModelSummary, DashboardPreferences, DashboardTab, MascotSettings, ModelAction, Reminder, ReminderSchedule, ShortcutSettingKey } from "../types";
+import { AUTHOR_DATA_CACHE_KEY, AUTHOR_DATA_URL, characters, DEFAULT_SETTINGS, defaultThemes, englishEmotionGroups, interactionTriggers, UI_STORAGE_KEY, uiText, workTypeClass, workTypeName } from "../config";
+import type { AppUpdateStatus, AuthorData, AuthorTag, CustomModelSummary, DashboardPreferences, DashboardTab, InteractionTrigger, MascotSettings, ModelAction, PomodoroPhase, PomodoroState, Reminder, ReminderSchedule, ShortcutSettingKey } from "../types";
 import { loadCachedAuthorData, openExternalUrl, parseAuthorData } from "../lib/author";
 import { checkForAppUpdate as resolveAppUpdate } from "../lib/appUpdates";
 import { downloadModelPackage, loadCustomModels, modelFilesFromSelection, modelImportErrorText } from "../lib/customModels";
 import { getLivelyMascot } from "../lib/mascotRuntime";
-import { deleteReminder, listReminders, loadDashboardPreferences, loadSettings, persistSettings, saveReminder, setGlobalShortcuts, shortcutDisplay, shortcutFromKeyboardEvent } from "../lib/settings";
+import { deleteReminder, getPomodoro, listReminders, loadDashboardPreferences, loadSettings, pausePomodoro, persistSettings, resetPomodoro, savePomodoro, saveReminder, setGlobalShortcuts, shortcutDisplay, shortcutFromKeyboardEvent, skipPomodoro, startPomodoro } from "../lib/settings";
 import { CharacterPreview } from "./CharacterPreview";
+import { GroupHeading, SegmentedControl, ToggleRow } from "./DashboardControls";
 
 const localDateTimeValue = (iso: string) => {
   const date = new Date(iso);
   const offset = date.getTimezoneOffset() * 60000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 };
+
+const defaultPomodoroState = (): PomodoroState => ({
+  title: "",
+  phase: "focus",
+  status: "idle",
+  focusMinutes: 25,
+  shortBreakMinutes: 5,
+  longBreakMinutes: 15,
+  longBreakEvery: 4,
+  sessionDurationSeconds: 25 * 60,
+  remainingSeconds: 25 * 60,
+  endsAt: null,
+  completedFocusToday: 0,
+  completedFocusDate: new Date().toISOString().slice(0, 10),
+});
 
 const LIVELY_MASCOT_SKILL_URL = "https://github.com/jingluoguo/lively-mascot/tree/master/skills/lively-mascot-image-model";
 export function SettingsWindow() {
@@ -47,6 +64,8 @@ export function SettingsWindow() {
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [editingReminder, setEditingReminder] = useState<Reminder | null>(null);
   const [reminderFeedback, setReminderFeedback] = useState<string | null>(null);
+  const [pomodoro, setPomodoro] = useState<PomodoroState>(defaultPomodoroState);
+  const [pomodoroNow, setPomodoroNow] = useState(Date.now());
   const visibilityShortcutButtonRef = useRef<HTMLButtonElement>(null);
   const dashboardShortcutButtonRef = useRef<HTMLButtonElement>(null);
   const shortcutsBeforeRecordingRef = useRef({
@@ -68,6 +87,7 @@ export function SettingsWindow() {
   const dashboardTabs: Array<{ id: DashboardTab; label: string; eyebrow: string }> = [
     { id: "appearance", label: text.appearanceTab, eyebrow: text.appearanceEyebrow },
     { id: "behavior", label: text.behaviorTab, eyebrow: text.behaviorEyebrow },
+    { id: "focus", label: text.focusTab, eyebrow: text.focusMode },
     { id: "reminders", label: text.remindersTab, eyebrow: text.remindersTitle },
     { id: "emotions", label: text.emotionsTab, eyebrow: text.emotionsEyebrow },
     { id: "about", label: text.aboutTab, eyebrow: text.aboutEyebrow },
@@ -96,6 +116,35 @@ export function SettingsWindow() {
     void listen<Reminder>("reminder-fired", () => { void listReminders().then(setReminders).catch(() => undefined); }).then((unlisten) => { stop = unlisten; });
     return () => stop?.();
   }, []);
+
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    void getPomodoro().then(setPomodoro).catch(() => undefined);
+    void listen<PomodoroState>("pomodoro-state", ({ payload }) => setPomodoro(payload)).then((unlisten) => { stop = unlisten; });
+    return () => stop?.();
+  }, []);
+
+  useEffect(() => {
+    if (pomodoro.status !== "running") return;
+    const timer = window.setInterval(() => setPomodoroNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [pomodoro.status]);
+
+  const runPomodoroAction = async (action: () => Promise<PomodoroState>) => {
+    try { setPomodoro(await action()); } catch { /* Keep the last scheduler state visible when native APIs are unavailable. */ }
+  };
+  const updatePomodoroDraft = <K extends "title" | "phase" | "sessionDurationSeconds">(key: K, value: PomodoroState[K]) => {
+    setPomodoro((current) => ({ ...current, [key]: value }));
+  };
+  const startPomodoroSession = async () => {
+    try {
+      const prepared = await savePomodoro({ ...pomodoro, status: "idle", endsAt: null, remainingSeconds: pomodoro.sessionDurationSeconds });
+      setPomodoro(prepared);
+      setPomodoro(await startPomodoro());
+    } catch {
+      // Keep the editable draft visible when native APIs are unavailable.
+    }
+  };
 
   const newReminder = () => {
     const runAt = new Date(Date.now() + 10 * 60 * 1000);
@@ -199,7 +248,8 @@ export function SettingsWindow() {
   useEffect(() => {
     document.documentElement.lang = dashboardPreferences.locale;
     document.title = text.dashboardLabel;
-  }, [dashboardPreferences.locale]);
+    void getCurrentWindow().setTitle(text.dashboardLabel).catch(() => undefined);
+  }, [dashboardPreferences.locale, text.dashboardLabel]);
 
   useEffect(() => {
     if (!pendingModelAction) return;
@@ -412,6 +462,7 @@ export function SettingsWindow() {
     const next = { ...dashboardPreferences, [key]: value };
     setDashboardPreferences(next);
     localStorage.setItem(UI_STORAGE_KEY, JSON.stringify(next));
+    void emitTo("main", "dashboard-preferences-update", next).catch(() => undefined);
   };
 
   const resetSettings = () => {
@@ -436,6 +487,16 @@ export function SettingsWindow() {
   const activeModel = livelyMascot?.models?.[settings.character];
   const capabilityModel = runtimeCapabilities && runtimeCapabilities.presentation?.labels ? runtimeCapabilities : activeModel;
   const activeAccessories = Object.entries(capabilityModel?.accessories ?? {});
+  const interactionOptions = Object.entries(livelyMascot?.emotions ?? {}).map(([id, emotion]) => ({
+    value: id,
+    label: dashboardPreferences.locale === "zh-CN" ? emotion.desc || emotion.name || id : emotion.name || emotion.desc || id,
+  }));
+  const interactionCopy: Record<InteractionTrigger, { label: string; hint: string }> = {
+    click: { label: text.interactionClick, hint: text.interactionClickHint },
+    doubleClick: { label: text.interactionDoubleClick, hint: text.interactionDoubleClickHint },
+    hover: { label: text.interactionHover, hint: text.interactionHoverHint },
+    drag: { label: text.interactionDrag, hint: text.interactionDragHint },
+  };
   const modelMotion = capabilityModel?.rig
     ? Object.entries(capabilityModel.rig).filter(([, enabled]) => enabled).map(([name]) => name).join(", ")
     : "";
@@ -453,6 +514,17 @@ export function SettingsWindow() {
       : updateStatus.state === "paused" ? text.resumeUpdate
         : text.downloadUpdate;
   const canActOnUpdate = ["available", "downloading", "paused", "ready"].includes(updateStatus.state);
+  const phaseLabels: Record<PomodoroPhase, string> = {
+    focus: text.focusSession,
+    shortBreak: text.shortBreak,
+    longBreak: text.longBreak,
+  };
+  const remainingSeconds = pomodoro.status === "idle"
+    ? pomodoro.sessionDurationSeconds
+    : pomodoro.status === "running" && pomodoro.endsAt
+      ? Math.max(0, Math.ceil((pomodoro.endsAt * 1000 - pomodoroNow) / 1000))
+      : pomodoro.remainingSeconds;
+  const timerText = `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`;
 
   return <main className={`settings-shell dashboard-shell theme-${dashboardPreferences.theme}`}>
     <aside className="dashboard-sidebar">
@@ -476,15 +548,15 @@ export function SettingsWindow() {
         ><span>{String(index + 1).padStart(2, "0")}</span><strong>{tab.label}</strong></button>)}
       </nav>
       <div className="dashboard-sidebar-footer">
-        <div className="preference-control"><span>{text.language}</span><div className="segmented" role="group" aria-label={text.language}><button type="button" aria-pressed={dashboardPreferences.locale === "zh-CN"} className={dashboardPreferences.locale === "zh-CN" ? "selected" : ""} onClick={() => updateDashboardPreference("locale", "zh-CN")}>中文</button><button type="button" aria-pressed={dashboardPreferences.locale === "en"} className={dashboardPreferences.locale === "en" ? "selected" : ""} onClick={() => updateDashboardPreference("locale", "en")}>EN</button></div></div>
-        <div className="preference-control"><span>{text.theme}</span><div className="segmented" role="group" aria-label={text.theme}><button type="button" aria-pressed={dashboardPreferences.theme === "light"} className={dashboardPreferences.theme === "light" ? "selected" : ""} onClick={() => updateDashboardPreference("theme", "light")}>{text.light}</button><button type="button" aria-pressed={dashboardPreferences.theme === "dark"} className={dashboardPreferences.theme === "dark" ? "selected" : ""} onClick={() => updateDashboardPreference("theme", "dark")}>{text.dark}</button></div></div>
+        <div className="preference-control"><span>{text.language}</span><SegmentedControl label={text.language} value={dashboardPreferences.locale} options={[{ value: "zh-CN", label: "中文" }, { value: "en", label: "EN" }]} onChange={(locale) => updateDashboardPreference("locale", locale)} /></div>
+        <div className="preference-control"><span>{text.theme}</span><SegmentedControl label={text.theme} value={dashboardPreferences.theme} options={[{ value: "light", label: text.light }, { value: "dark", label: text.dark }]} onChange={(theme) => updateDashboardPreference("theme", theme)} /></div>
         <span className="dashboard-version">v0.2.0 · lively 0.3.1</span>
       </div>
     </aside>
     <section className="dashboard-workspace">
       <header className="dashboard-workspace-header">
         <div><span>{activeTabDefinition.eyebrow}</span><h1>{activeTabDefinition.label}</h1></div>
-        {activeTab !== "about" && activeTab !== "reminders" && <button className="reset-button" type="button" onClick={resetSettings}>{text.reset}</button>}
+        {activeTab !== "about" && activeTab !== "reminders" && activeTab !== "focus" && <button className="reset-button" type="button" onClick={resetSettings}>{text.reset}</button>}
       </header>
       <div className={`dashboard-scroll dashboard-scroll-${activeTab}`}>
         <div key={activeTab} id="dashboard-panel" className={`dashboard-panel dashboard-panel-${activeTab}`} role="tabpanel" aria-labelledby={`dashboard-tab-${activeTab}`}>
@@ -494,36 +566,59 @@ export function SettingsWindow() {
             </aside>
             <div className="settings-groups">
               <section className="settings-group character-picker">
-                <div className="group-heading"><span className="control-label">MODEL</span><h2>{text.characterModel}</h2></div>
+                <GroupHeading eyebrow="MODEL" title={text.characterModel} />
                 <div className="character-grid">{characters.map((character) => <button key={character.id} type="button" className={settings.character === character.id ? "selected" : ""} onClick={() => selectCharacter(character.id)}><CharacterPreview character={character.id} settings={settings} /><small>{character.name[dashboardPreferences.locale]}</small><em>{text.officialModel}</em></button>)}{customModels.map((model) => { const labels = livelyMascot?.models?.[model.id]?.presentation?.labels; const name = dashboardPreferences.locale === "zh-CN" ? labels?.zh || model.name : labels?.en || model.name; return <div key={model.id} className={`custom-model-card${settings.character === model.id ? " selected" : ""}`}><button type="button" className="custom-model-select" onClick={() => selectCharacter(model.id)}><span className="custom-model-preview"><CharacterPreview character={model.id} settings={settings} /></span><small>{name}</small><em>{text.userModel}{model.version ? ` · ${model.version}` : ""}{model.author ? ` · ${model.author}` : ""}</em></button><div className="custom-model-actions"><button type="button" onClick={(event) => { event.stopPropagation(); requestModelAction(model.id, "export"); }} aria-label={`${text.exportModel} ${name}`} title={text.exportModel}>↓</button><button type="button" onClick={(event) => { event.stopPropagation(); requestModelAction(model.id, "delete"); }} aria-label={`${text.deleteModel} ${name}`} title={text.deleteModel}>×</button></div>{modelActionFeedback === model.id && <small className="model-action-feedback" role="status">{text.modelExported}</small>}</div>; })}</div>
                 <div className={`model-dropzone${modelDragActive ? " active" : ""}`} onDragEnter={(event) => { event.preventDefault(); setModelDragActive(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setModelDragActive(false); }} onDrop={(event) => void handleModelDrop(event)}><strong>{text.dropModel}</strong><span>{text.modelFormatHint}<a className="model-skill-link" href={LIVELY_MASCOT_SKILL_URL} target="_blank" rel="noreferrer" onClick={(event) => { event.preventDefault(); openExternalUrl(LIVELY_MASCOT_SKILL_URL); }}>lively-mascot Skill</a>{dashboardPreferences.locale === "zh-CN" ? "。" : "."}</span><label className="model-import-button"><input type="file" accept=".livelymodel,.js,.css,.json" multiple onChange={importModel} />{text.chooseModel}</label></div>
                 <small className="model-import-hint">{text.modelPackageContents}</small>
                 {modelImportState !== "idle" && <small className={`model-import-status ${modelImportState}`}>{modelImportMessage || (modelImportState === "ready" ? text.modelImported : text.modelImportError)}</small>}
               </section>
               <section className="settings-group">
-                <div className="group-heading"><span className="control-label">STYLE</span><h2>{text.behavior}</h2></div>
+                <GroupHeading eyebrow="STYLE" title={text.behavior} />
                 <div className="control-row"><label htmlFor="size">{text.size}</label><div className="range-wrap"><input id="size" type="range" min="80" max="160" step="10" value={settings.size} onChange={(event) => update("size", Number(event.target.value))} /><output>{settings.size}px</output></div></div>
-                <div className="control-row"><span>{text.viewMode}</span><div className="segmented" role="group" aria-label={text.viewMode}>{(["2d", "3d"] as ViewMode[]).map((mode) => <button key={mode} type="button" aria-pressed={settings.viewMode === mode} className={settings.viewMode === mode ? "selected" : ""} onClick={() => update("viewMode", mode)}>{mode.toUpperCase()}</button>)}</div></div>
-                <div className="control-row"><span>{text.faceVariant}</span><div className="segmented" role="group" aria-label={text.faceVariant}>{([["default", text.faceDefault], ["simple", text.faceSimple], ["dot", text.faceDot]] as const).map(([variant, label]) => <button key={variant} type="button" aria-pressed={settings.faceVariant === variant} className={settings.faceVariant === variant ? "selected" : ""} onClick={() => update("faceVariant", variant)}>{label}</button>)}</div></div>
-                <label className="toggle-row"><span><strong>{text.outline}</strong><small>{text.outlineHint}</small></span><input type="checkbox" checked={settings.outlineVisible} onChange={(event) => update("outlineVisible", event.target.checked)} /><i /></label>
+                <div className="control-row"><span>{text.viewMode}</span><SegmentedControl label={text.viewMode} value={settings.viewMode} options={(["2d", "3d"] as ViewMode[]).map((mode) => ({ value: mode, label: mode.toUpperCase() }))} onChange={(mode) => update("viewMode", mode)} /></div>
+                <div className="control-row"><span>{text.faceVariant}</span><SegmentedControl label={text.faceVariant} value={settings.faceVariant} options={[{ value: "default", label: text.faceDefault }, { value: "simple", label: text.faceSimple }, { value: "dot", label: text.faceDot }]} onChange={(variant) => update("faceVariant", variant)} /></div>
+                <ToggleRow label={text.outline} description={text.outlineHint} checked={settings.outlineVisible} onChange={(checked) => update("outlineVisible", checked)} />
                 <div className="color-row"><label>{text.bodyColor}<input type="color" value={settings.bodyColor} onChange={(event) => update("bodyColor", event.target.value)} /></label><label>{text.outlineColor}<input type="color" value={settings.outlineColor} onChange={(event) => update("outlineColor", event.target.value)} /></label><label>{text.accentColor}<input type="color" value={settings.accentColor} onChange={(event) => update("accentColor", event.target.value)} /></label></div>
                 <div className="model-capabilities"><span className="capability-label">{text.modelCapabilities}</span><div><span>{text.modelParts}: {Object.keys(capabilityModel?.parts ?? {}).join(", ") || "-"}</span><span>{text.modelGaze}: {capabilityModel?.gaze?.scope ?? "-"}</span><span>{text.modelMotion}: {modelMotion || "-"}</span></div></div>
-                <div className="model-accessories"><span className="capability-label">{text.modelAccessories}</span>{activeAccessories.length === 0 ? <small>{text.noAccessories}</small> : activeAccessories.map(([id, definition]) => { const key = `${settings.character}:${id}`; return <label className="toggle-row" key={id}><span><strong>{id}</strong><small>{definition.actions.join(", ") || text.modelAccessories}</small></span><input type="checkbox" checked={settings.accessories[key] ?? definition.default} onChange={(event) => update("accessories", { ...settings.accessories, [key]: event.target.checked })} /><i /></label>; })}</div>
+                <div className="model-accessories"><span className="capability-label">{text.modelAccessories}</span>{activeAccessories.length === 0 ? <small>{text.noAccessories}</small> : activeAccessories.map(([id, definition]) => { const key = `${settings.character}:${id}`; return <ToggleRow key={id} label={id} description={definition.actions.join(", ") || text.modelAccessories} checked={settings.accessories[key] ?? definition.default} onChange={(checked) => update("accessories", { ...settings.accessories, [key]: checked })} />; })}</div>
               </section>
             </div>
           </div>}
           {activeTab === "behavior" && <div className="behavior-layout settings-groups">
             <section className="settings-group">
-              <div className="group-heading"><span className="control-label">POINTER</span><h2>{text.behavior}</h2></div>
-              <label className="toggle-row"><span><strong>{text.followCursor}</strong><small>{text.followHint}</small></span><input type="checkbox" checked={settings.followCursor} onChange={(event) => update("followCursor", event.target.checked)} /><i /></label>
+              <GroupHeading eyebrow="POINTER" title={text.behavior} />
+              <ToggleRow label={text.followCursor} description={text.followHint} checked={settings.followCursor} onChange={(checked) => update("followCursor", checked)} />
+              <ToggleRow label={text.edgeDock} description={text.edgeDockHint} checked={settings.edgeDock} onChange={(checked) => update("edgeDock", checked)} />
+              <div className="control-row"><label htmlFor="edge-dock-threshold">{text.edgeDockThreshold}</label><div className="range-wrap"><input id="edge-dock-threshold" type="range" min="0" max="40" step="1" value={settings.edgeDockThreshold} disabled={!settings.edgeDock} onChange={(event) => update("edgeDockThreshold", Number(event.target.value))} /><output>{settings.edgeDockThreshold}px</output></div></div>
+            </section>
+            <section className="settings-group interaction-group">
+              <GroupHeading eyebrow="INTERACTIONS" title={text.interactions} />
+              <p className="interaction-hint">{text.interactionsHint}</p>
+              <div className="interaction-list">
+                {interactionTriggers.map(({ id }) => {
+                  const configuredEmotion = settings.interactions[id];
+                  const declaredActions = activeModel?.interactions?.[id];
+                  const isUnavailable = declaredActions !== undefined && configuredEmotion !== "none" && !declaredActions.includes(configuredEmotion);
+                  const options = configuredEmotion !== "none" && !interactionOptions.some((option) => option.value === configuredEmotion)
+                    ? [{ value: configuredEmotion, label: configuredEmotion }, ...interactionOptions]
+                    : interactionOptions;
+                  return <label className="interaction-row" key={id}>
+                    <span><strong>{interactionCopy[id].label}</strong><small>{isUnavailable ? text.interactionUnavailable : interactionCopy[id].hint}</small></span>
+                    <select value={configuredEmotion} onChange={(event) => update("interactions", { ...settings.interactions, [id]: event.target.value })}>
+                      <option value="none">{text.interactionNone}</option>
+                      {options.map((option) => <option key={option.value} value={option.value} disabled={declaredActions !== undefined && !declaredActions.includes(option.value)}>{option.label}</option>)}
+                    </select>
+                  </label>;
+                })}
+              </div>
             </section>
             <section className="settings-group">
-              <div className="group-heading"><span className="control-label">SHORTCUTS</span><h2>{text.recordShortcut}</h2></div>
+              <GroupHeading eyebrow="SHORTCUTS" title={text.recordShortcut} />
               <div className="shortcut-row"><div><strong>{text.globalShortcut}</strong><small>{text.globalShortcutHint}</small></div><div className="shortcut-control"><button ref={visibilityShortcutButtonRef} type="button" className={`shortcut-capture${recordingShortcut === "globalShortcut" ? " recording" : ""}${recordingShortcut === "globalShortcut" && shortcutError ? " conflict" : ""}`} onClick={() => startShortcutRecording("globalShortcut")} onBlur={cancelShortcutRecording} aria-label={text.recordShortcut}>{recordingShortcut === "globalShortcut" ? shortcutDraft ? shortcutDisplay(shortcutDraft) : text.recordingShortcut : shortcutDisplay(settings.globalShortcut)}</button>{recordingShortcut === "globalShortcut" && shortcutError && <small className="shortcut-error" role="alert">{shortcutError}</small>}</div></div>
               <div className="shortcut-row"><div><strong>{text.dashboardShortcut}</strong><small>{text.dashboardShortcutHint}</small></div><div className="shortcut-control"><button ref={dashboardShortcutButtonRef} type="button" className={`shortcut-capture${recordingShortcut === "dashboardShortcut" ? " recording" : ""}${recordingShortcut === "dashboardShortcut" && shortcutError ? " conflict" : ""}`} onClick={() => startShortcutRecording("dashboardShortcut")} onBlur={cancelShortcutRecording} aria-label={text.recordShortcut}>{recordingShortcut === "dashboardShortcut" ? shortcutDraft ? shortcutDisplay(shortcutDraft) : text.recordingShortcut : shortcutDisplay(settings.dashboardShortcut)}</button>{recordingShortcut === "dashboardShortcut" && shortcutError && <small className="shortcut-error" role="alert">{shortcutError}</small>}</div></div>
             </section>
             <section className="settings-group autostart-group">
-              <div className="group-heading"><span className="control-label">SYSTEM</span><h2>{text.autostart}</h2></div>
+              <GroupHeading eyebrow="SYSTEM" title={text.autostart} />
               <div className="autostart-row">
                 <div><strong>{autostartState === "enabled" ? text.autostartEnabled : autostartState === "disabled" ? text.autostartDisabled : text.autostartUnavailable}</strong><small>{text.autostartHint}</small></div>
                 <div className="autostart-actions">
@@ -533,7 +628,7 @@ export function SettingsWindow() {
               </div>
             </section>
             <section className="settings-group update-group">
-              <div className="group-heading"><span className="control-label">UPDATE</span><h2>{text.appUpdate}</h2></div>
+              <GroupHeading eyebrow="UPDATE" title={text.appUpdate} />
               <div className="update-row">
                 <div>
                   <strong>{updateStatusLabel}</strong>
@@ -546,6 +641,26 @@ export function SettingsWindow() {
                 </div>
               </div>
             </section>
+          </div>}
+          {activeTab === "focus" && <div className="pomodoro-layout">
+            <section className={`pomodoro-hero phase-${pomodoro.phase}`}>
+              <div className="pomodoro-hero-copy"><span className="control-label">{text.focusMode}</span><h2>{pomodoro.title || phaseLabels[pomodoro.phase]}</h2><p>{pomodoro.status === "idle" ? text.focusHint : phaseLabels[pomodoro.phase]}</p></div>
+              <div className="pomodoro-timer" aria-live="polite"><strong>{timerText}</strong><span>{pomodoro.status === "running" ? text.focusRunning : pomodoro.status === "paused" ? text.focusPaused : text.focusReady}</span></div>
+            </section>
+            <div className="pomodoro-session-grid">
+              <section className={`pomodoro-session${pomodoro.status !== "idle" ? " locked" : ""}`} aria-labelledby="pomodoro-session-title">
+                <GroupHeading eyebrow={text.session} title={text.focusTitle} titleId="pomodoro-session-title" />
+                <label className="pomodoro-field"><span>{text.sessionTitle}</span><input disabled={pomodoro.status !== "idle"} value={pomodoro.title} maxLength={80} onChange={(event) => updatePomodoroDraft("title", event.target.value)} placeholder={text.sessionTitlePlaceholder} /></label>
+                <label className="pomodoro-field"><span>{text.sessionType}</span><select disabled={pomodoro.status !== "idle"} value={pomodoro.phase} onChange={(event) => updatePomodoroDraft("phase", event.target.value as PomodoroPhase)}><option value="focus">{text.focusSession}</option><option value="shortBreak">{text.shortBreak}</option><option value="longBreak">{text.longBreak}</option></select></label>
+                <label className="pomodoro-field"><span>{text.sessionDuration}</span><div className="pomodoro-duration-input"><input disabled={pomodoro.status !== "idle"} type="number" min="1" max="120" value={Math.ceil(pomodoro.sessionDurationSeconds / 60)} onChange={(event) => updatePomodoroDraft("sessionDurationSeconds", Math.max(1, Math.min(120, Number(event.target.value) || 1)) * 60)} /><small>{text.minutes}</small></div></label>
+                {pomodoro.status !== "idle" && <small className="pomodoro-lock-notice" role="status">{text.sessionLocked}</small>}
+                <div className="pomodoro-controls" aria-label={text.focusTitle}>
+                  <button type="button" className="pomodoro-primary" onClick={() => void (pomodoro.status === "idle" ? startPomodoroSession() : runPomodoroAction(pomodoro.status === "running" ? pausePomodoro : startPomodoro))}>{pomodoro.status === "running" ? text.pauseFocus : pomodoro.status === "paused" ? text.resumeFocus : text.startTimer}</button>
+                  {pomodoro.status !== "idle" && <><button type="button" className="pomodoro-secondary" onClick={() => void runPomodoroAction(resetPomodoro)}>{text.resetTimer}</button><button type="button" className="pomodoro-secondary" onClick={() => void runPomodoroAction(skipPomodoro)}>{text.skipFocus}</button></>}
+                </div>
+              </section>
+              <section className="pomodoro-today" aria-label={text.focusToday}><span>{text.focusToday}</span><strong>{String(pomodoro.completedFocusToday).padStart(2, "0")}</strong><small>{text.focusSession}</small></section>
+            </div>
           </div>}
           {activeTab === "reminders" && <div className="reminders-layout settings-groups">
             <section className="settings-group reminders-overview">
@@ -561,19 +676,20 @@ export function SettingsWindow() {
               </div>
             </section>
             {editingReminder && <div className="reminder-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditingReminder(null); }}><aside className="settings-group reminder-editor" role="dialog" aria-modal="true" aria-labelledby="reminder-editor-title">
-              <div className="reminder-editor-heading"><div className="group-heading"><span className="control-label">TASK</span><h2 id="reminder-editor-title">{editingReminder.title ? text.editReminder : text.addReminder}</h2></div><button type="button" className="reminder-editor-close" aria-label={text.cancelReminder} onClick={() => setEditingReminder(null)}>×</button></div>
+              <div className="reminder-editor-heading"><GroupHeading eyebrow="TASK" title={editingReminder.title ? text.editReminder : text.addReminder} titleId="reminder-editor-title" /><button type="button" className="reminder-editor-close" aria-label={text.cancelReminder} onClick={() => setEditingReminder(null)}>×</button></div>
               <label className="reminder-field"><span>{text.reminderTitle}</span><input autoFocus value={editingReminder.title} onChange={(event) => updateReminderDraft("title", event.target.value)} placeholder={text.reminderTitle} /></label>
               <div className="reminder-field reminder-date-field"><span>{text.reminderTime}</span><div className="reminder-date-inputs"><label><small>{text.reminderDate}</small><input type="date" aria-label={text.reminderDate} value={localDateTimeValue(editingReminder.runAt).slice(0, 10)} onChange={(event) => updateReminderDatePart("date", event.target.value)} /></label><label><small>{text.reminderClock}</small><input type="time" aria-label={text.reminderClock} value={localDateTimeValue(editingReminder.runAt).slice(11)} onChange={(event) => updateReminderDatePart("time", event.target.value)} /></label></div></div>
               <label className="reminder-field"><span>{text.reminderSchedule}</span><select value={editingReminder.schedule} onChange={(event) => updateReminderDraft("schedule", event.target.value as ReminderSchedule)}><option value="once">{text.once}</option><option value="daily">{text.daily}</option><option value="weekdays">{text.weekdays}</option><option value="interval">{text.interval}</option></select></label>
               {editingReminder.schedule === "interval" && <label className="reminder-field"><span>{text.intervalMinutes}</span><input type="number" min="1" max="10080" value={editingReminder.intervalMinutes ?? 30} onChange={(event) => updateReminderDraft("intervalMinutes", Math.max(1, Number(event.target.value) || 1))} /></label>}
               <label className="reminder-field"><span>{text.reminderEmotion}</span><select value={editingReminder.emotion} onChange={(event) => updateReminderDraft("emotion", event.target.value)}>{Object.entries(livelyMascot?.emotions ?? {}).map(([id, emotion]) => <option key={id} value={id}>{emotion.desc || emotion.name || id}</option>)}</select></label>
-              <label className="toggle-row"><span><strong>{text.reminderEnabled}</strong></span><input type="checkbox" checked={editingReminder.enabled} onChange={(event) => updateReminderDraft("enabled", event.target.checked)} /><i /></label>
+              <ToggleRow label={text.reminderEnabled} checked={editingReminder.enabled} onChange={(checked) => updateReminderDraft("enabled", checked)} />
+              <ToggleRow label={text.strongReminder} description={text.strongReminderHint} checked={editingReminder.systemNotification} onChange={(checked) => updateReminderDraft("systemNotification", checked)} />
               <div className="reminder-editor-actions"><button type="button" className="shortcut-capture" disabled={!editingReminder.title.trim()} onClick={() => void persistReminder()}>{text.saveReminder}</button><button type="button" className="autostart-refresh" onClick={() => setEditingReminder(null)}>{text.cancelReminder}</button></div>
             </aside></div>}
           </div>}
           {activeTab === "emotions" && <div className="emotion-layout">
             <aside className="preview-pane emotion-preview"><div className="preview-stage"><div ref={previewRef} className="preview-host" /></div><button className="apply-emotion-button" type="button" onClick={() => { update("emotion", previewEmotion); setEmotionApplied(true); }}>{text.setEmotion}<span aria-hidden="true">↗</span></button>{emotionApplied && <small className="emotion-applied" role="status">{text.emotionApplied}</small>}</aside>
-            <section className="emotion-section"><div className="emotion-summary"><span>{Object.keys(livelyMascot?.emotions ?? {}).length} {text.emotionCount}</span></div><div className="emotion-scroll">{groupedEmotions.map((group) => <div className="emotion-group" key={group.id}><h3>{dashboardPreferences.locale === "zh-CN" ? group.name : englishEmotionGroups[group.id] ?? group.id}</h3><div className="emotion-grid">{group.emotions.map((emotion) => <button key={emotion.id} type="button" className={previewEmotion === emotion.id ? "selected" : ""} onClick={() => setPreviewEmotion(emotion.id)}><CharacterPreview character={settings.character} settings={settings} emotion={emotion.id} size={48} className="emotion-thumb" /><span>{dashboardPreferences.locale === "zh-CN" ? emotion.desc : emotion.name}</span><small>{emotion.id}</small></button>)}</div></div>)}</div></section>
+            <section className="emotion-section"><div className="emotion-summary"><span>{Object.keys(livelyMascot?.emotions ?? {}).length} {text.emotionCount}</span></div><div className="emotion-scroll">{groupedEmotions.map((group) => <div className="emotion-group" key={group.id}><h3>{dashboardPreferences.locale === "zh-CN" ? group.name : englishEmotionGroups[group.id] ?? group.id}</h3><div className="emotion-grid">{group.emotions.map((emotion) => <button key={emotion.id} type="button" className={previewEmotion === emotion.id ? "selected" : ""} onClick={() => setPreviewEmotion(emotion.id)}><CharacterPreview character={settings.character} settings={settings} emotion={emotion.id} size={48} className="emotion-thumb" /><span>{dashboardPreferences.locale === "zh-CN" ? emotion.desc : emotion.name}</span></button>)}</div></div>)}</div></section>
           </div>}
           {activeTab === "about" && <div className="about-layout">
             {authorData ? <>

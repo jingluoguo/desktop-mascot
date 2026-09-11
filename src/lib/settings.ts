@@ -1,8 +1,8 @@
 import { emitTo } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, STORAGE_KEY, UI_STORAGE_KEY } from "../config";
-import type { DashboardPreferences, MascotSettings, Reminder } from "../types";
+import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, STORAGE_KEY, UI_STORAGE_KEY, uiText } from "../config";
+import type { DashboardPreferences, InteractionSettings, InteractionTrigger, MascotSettings, PomodoroState, Reminder } from "../types";
 import { isRecord } from "./author";
 const persistSettings = (settings: MascotSettings) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
@@ -19,6 +19,7 @@ const loadSettings = (): MascotSettings => {
         ? raw as Partial<MascotSettings>
         : {};
     const savedSize = Number(saved.size);
+    const savedEdgeDockThreshold = Number(saved.edgeDockThreshold);
     const size = savedSize === 260
       ? DEFAULT_SETTINGS.size
       : Number.isFinite(savedSize)
@@ -33,6 +34,14 @@ const loadSettings = (): MascotSettings => {
     const accessories = isRecord(saved.accessories)
       ? Object.fromEntries(Object.entries(saved.accessories).filter(([, value]) => typeof value === "boolean"))
       : {};
+    const interactions = Object.fromEntries(
+      (Object.keys(DEFAULT_SETTINGS.interactions) as InteractionTrigger[]).map((trigger) => [
+        trigger,
+        typeof saved.interactions === "object" && saved.interactions !== null && typeof (saved.interactions as Record<string, unknown>)[trigger] === "string"
+          ? (saved.interactions as Record<string, string>)[trigger]
+          : DEFAULT_SETTINGS.interactions[trigger],
+      ]),
+    ) as InteractionSettings;
     const color = (value: unknown, fallback: string) =>
       typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
     return {
@@ -42,8 +51,13 @@ const loadSettings = (): MascotSettings => {
       viewMode,
       faceVariant,
       accessories,
+      interactions,
       outlineVisible: typeof saved.outlineVisible === "boolean" ? saved.outlineVisible : DEFAULT_SETTINGS.outlineVisible,
       followCursor: typeof saved.followCursor === "boolean" ? saved.followCursor : DEFAULT_SETTINGS.followCursor,
+      edgeDock: typeof saved.edgeDock === "boolean" ? saved.edgeDock : DEFAULT_SETTINGS.edgeDock,
+      edgeDockThreshold: Number.isFinite(savedEdgeDockThreshold)
+        ? Math.min(40, Math.max(0, Math.round(savedEdgeDockThreshold)))
+        : DEFAULT_SETTINGS.edgeDockThreshold,
       bodyColor: color(saved.bodyColor, DEFAULT_SETTINGS.bodyColor),
       outlineColor: color(saved.outlineColor, DEFAULT_SETTINGS.outlineColor),
       accentColor: color(saved.accentColor, DEFAULT_SETTINGS.accentColor),
@@ -111,7 +125,7 @@ const openSettingsWindow = async (settings: MascotSettings) => {
     // Window commands can fail independently when the app was backgrounded.
     // Keep restoring the window even if it is already visible or maximized.
     await settingsWindow.unminimize().catch(() => undefined);
-    await settingsWindow.setTitle("仪表盘").catch(() => undefined);
+    await settingsWindow.setTitle(uiText[loadDashboardPreferences().locale].dashboardLabel).catch(() => undefined);
     await settingsWindow.show().catch(() => undefined);
     await settingsWindow.maximize().catch(() => undefined);
     await settingsWindow.setFocus().catch(() => undefined);
@@ -120,7 +134,7 @@ const openSettingsWindow = async (settings: MascotSettings) => {
   }
   settingsWindow = new WebviewWindow("settings", {
     url: "/?view=settings",
-    title: "仪表盘",
+    title: uiText[loadDashboardPreferences().locale].dashboardLabel,
     width: 820,
     height: 640,
     minWidth: 720,
@@ -142,4 +156,10 @@ const openSettingsWindow = async (settings: MascotSettings) => {
 const listReminders = () => invoke<Reminder[]>("list_reminders");
 const saveReminder = (reminder: Reminder) => invoke<Reminder[]>("save_reminder", { reminder });
 const deleteReminder = (id: string) => invoke<Reminder[]>("delete_reminder", { id });
-export { persistSettings, loadSettings, shortcutDisplay, shortcutFromKeyboardEvent, setGlobalShortcuts, petWindowSize, loadDashboardPreferences, openSettingsWindow, listReminders, saveReminder, deleteReminder };
+const getPomodoro = () => invoke<PomodoroState>("get_pomodoro");
+const startPomodoro = () => invoke<PomodoroState>("start_pomodoro");
+const pausePomodoro = () => invoke<PomodoroState>("pause_pomodoro");
+const resetPomodoro = () => invoke<PomodoroState>("reset_pomodoro");
+const skipPomodoro = () => invoke<PomodoroState>("skip_pomodoro");
+const savePomodoro = (pomodoro: PomodoroState) => invoke<PomodoroState>("save_pomodoro", { pomodoro });
+export { persistSettings, loadSettings, shortcutDisplay, shortcutFromKeyboardEvent, setGlobalShortcuts, petWindowSize, loadDashboardPreferences, openSettingsWindow, listReminders, saveReminder, deleteReminder, getPomodoro, startPomodoro, pausePomodoro, resetPomodoro, skipPomodoro, savePomodoro };

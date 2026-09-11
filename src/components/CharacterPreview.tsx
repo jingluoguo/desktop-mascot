@@ -1,8 +1,10 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { defaultThemes } from "../config";
 import type { MascotSettings } from "../types";
 import { getLivelyMascot } from "../lib/mascotRuntime";
-export function CharacterPreview({ character, settings, emotion = "02", size = 36, className = "" }: { character: string; settings: MascotSettings; emotion?: string; size?: number; className?: string }) {
+type CharacterPreviewProps = { character: string; settings: MascotSettings; emotion?: string; size?: number; className?: string };
+
+function CharacterPreviewImpl({ character, settings, emotion = "02", size = 36, className = "" }: CharacterPreviewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const previewTheme = character === settings.character ? settings : { ...settings, character, ...defaultThemes[character] };
 
@@ -35,3 +37,26 @@ export function CharacterPreview({ character, settings, emotion = "02", size = 3
   return <div ref={hostRef} className={`character-thumb-host ${className}`} aria-hidden="true" />;
 }
 
+const usesCurrentTheme = (character: string, settings: MascotSettings) =>
+  character === settings.character || !defaultThemes[character];
+
+const areEqual = (previous: CharacterPreviewProps, next: CharacterPreviewProps) => {
+  if (
+    previous.character !== next.character
+    || previous.emotion !== next.emotion
+    || previous.size !== next.size
+    || previous.className !== next.className
+    || previous.settings.character !== next.settings.character
+    || previous.settings.viewMode !== next.settings.viewMode
+    || previous.settings.outlineVisible !== next.settings.outlineVisible
+    || previous.settings.faceVariant !== next.settings.faceVariant
+  ) return false;
+
+  if (!usesCurrentTheme(next.character, next.settings)) return true;
+  return previous.settings.bodyColor === next.settings.bodyColor
+    && previous.settings.outlineColor === next.settings.outlineColor
+    && previous.settings.accentColor === next.settings.accentColor
+    && previous.settings.accessories === next.settings.accessories;
+};
+
+export const CharacterPreview = memo(CharacterPreviewImpl, areEqual);

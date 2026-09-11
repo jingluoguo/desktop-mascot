@@ -50,6 +50,12 @@ yarn tauri build
 
 构建产物由 Tauri 输出到 `src-tauri/target/release/bundle/`。
 
+## 项目落地页
+
+落地页位于 [`landing/`](landing/)，是一个不依赖构建步骤的静态站点。提交到 `master` 后，GitHub Actions 会自动发布它。
+
+首次发布时，请在仓库 **Settings → Pages → Build and deployment** 中将 Source 设为 **GitHub Actions**。随后可通过 `https://jingluoguo.github.io/desktop-mascot/` 访问。
+
 ## 应用内更新
 
 应用发布版启动时会先读取 `AUTHOR_DATA_URL` 中 `desktop-mascot` 项的版本。只有远程版本高于当前版本时，才会继续检查 `jingluoguo/desktop-mascot` 的最新 GitHub Release；存在当前平台经过签名的更新包时，应用会自动下载，下载完成后由用户确认重启并安装。
@@ -74,6 +80,21 @@ public/              Vite 静态资源
 在仪表盘的“角色模型”区域，可以将 `.livelymodel` 文件拖入导入区域，也可以点击选择文件。`.livelymodel` 是 ZIP 格式的模型包，必须包含 `model.js`、`model.css` 和 `model.json`；也支持同时选择这三个文件。文件应由 `lively-mascot` 内的图片模型 Skill 生成，并且 `model.json` 中的 `id` 需要与模型定义一致。
 
 用户模型可以导出为 `.livelymodel`、覆盖导入或删除。内置模型不能被删除或覆盖。应用会把用户模型复制到系统应用数据目录下的 `models/`，因此安装新版本时不会覆盖。
+
+模型包还可以在 `model.json` 中声明可用互动反应。未声明该字段的模型会兼容所有内置表情；声明后，桌宠只会为对应触发方式执行列出的表情，其他配置会安全地保持当前状态。
+
+```json
+{
+  "interactions": {
+    "click": ["10", "16"],
+    "doubleClick": ["16"],
+    "hover": ["11"],
+    "drag": ["38"]
+  }
+}
+```
+
+可用触发方式为 `click`、`doubleClick`、`hover` 和 `drag`。表情 ID 对应 `lively-mascot` 的表情定义，也可以是模型包定义的自定义表情。
 
 ## 许可
 
