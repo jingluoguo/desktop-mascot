@@ -1,19 +1,21 @@
+**English** | [简体中文](./CHANGELOG.zh-CN.md)
+
 # Changelog
 
 ## [0.2.0] - 2026-09-07
 
-### 新增
+### Added
 
-- 支持导入、导出、覆盖和删除自定义角色模型，并将用户模型保存到系统应用数据目录。
-- 仪表盘支持登录时启动设置，以及中文 / English 和浅色 / 深色主题。
-- 接入应用内更新检查、自动下载、下载进度、暂停 / 继续和安装流程。
+- Support importing, exporting, overwriting, and deleting custom character models, with user models saved to the system app data directory.
+- The dashboard now supports a launch-at-login setting, plus Chinese / English and light / dark themes.
+- Added in-app update checks, automatic download, download progress, pause / resume, and the install flow.
 
-### 改进
+### Changed
 
-- 重构仪表盘和桌面宠物窗口，支持角色外观、配件、表情和快捷键的集中管理。
-- 支持通过拖拽移动桌面宠物窗口，并改进窗口定位与启动时恢复行为。
-- 升级 `lively-mascot` 至 0.3.1，刷新角色预览和仪表盘视觉样式。
+- Refactored the dashboard and the desktop pet window to support centralized management of character appearance, accessories, expressions, and shortcuts.
+- The desktop pet window can now be moved by dragging, with improved window positioning and on-startup restore behavior.
+- Upgraded `lively-mascot` to 0.3.1 and refreshed character previews and dashboard visuals.
 
-### 修复
+### Fixed
 
-- 修复登录启动后桌面宠物窗口可能处于隐藏或最小化状态的问题。
+- Fixed the desktop pet window sometimes starting hidden or minimized when launched at login.

@@ -1,66 +1,68 @@
+**English** | [简体中文](./ROADMAP.zh-CN.md)
+
 # Roadmap
 
-Desktop Mascot 的方向是从可配置的桌面宠物，逐步成为不打扰工作、但能提供恰当陪伴的本地桌面工具。
+Desktop Mascot is headed from a configurable desktop pet toward a local desktop tool that stays out of the way of your work while still offering the right kind of company.
 
-本路线图描述当前意向，不代表每项功能的发布承诺；优先级会根据用户反馈、平台支持和模型能力调整。
+This roadmap describes current intent rather than a release commitment for every item; priorities will shift with user feedback, platform support, and model capabilities.
 
-## 近期：更适合日常使用
+## Near term: better for everyday use
 
-### 专注模式与番茄钟（已完成）
+### Focus mode and Pomodoro (done)
 
-- [x] 支持专注、短休息和长休息周期。
-- [x] 让宠物根据当前周期切换表情、动作和提醒气泡。
-- [x] 显示当日完成的专注次数，并与现有定时提醒共用调度能力。
+- [x] Support focus, short break, and long break cycles.
+- [x] Let the pet switch expressions, motions, and reminder bubbles according to the current cycle.
+- [x] Show the number of focus sessions completed today, sharing scheduling with the existing timed reminders.
 
-### 情景预设
+### Scenario presets
 
-- 提供工作、休息、极简和演示等预设。
-- 一个预设可同时保存宠物大小、跟随光标、边缘吸附、提醒和可见性。
-- 支持创建、编辑、导入和导出个人预设。
+- Provide presets such as Work, Break, Minimal, and Demo.
+- A single preset can save pet size, cursor following, edge snapping, reminders, and visibility together.
+- Support creating, editing, importing, and exporting personal presets.
 
-### 更丰富的互动（已完成）
+### Richer interactions (done)
 
-- [x] 支持点击、双击、悬停和拖拽等交互对应不同反应。
-- [x] 为模型定义可声明的动作能力，未实现的模型可平稳降级为表情反馈。
-- [x] 为配件和表情提供更直接的快捷切换入口。
+- [x] Support distinct reactions for click, double click, hover, and drag.
+- [x] Let models declare which actions they support, with unimplemented models degrading gracefully to expression feedback.
+- [x] Provide more direct shortcuts for switching accessories and expressions.
 
-## 中期：更少打扰、更有上下文
+## Mid term: less intrusive, more contextual
 
-### 桌面状态感知
+### Desktop state awareness
 
-- 根据本地时间、系统深浅色和用户空闲时长改变宠物状态。
-- 全屏演示、会议或屏幕共享时自动隐藏或静默。
-- 提供清晰的开关和状态说明，所有判断均在本地完成。
+- Change the pet's state based on local time, system light / dark mode, and how long the user has been idle.
+- Automatically hide or go quiet during full-screen presentations, meetings, or screen sharing.
+- Provide clear toggles and status explanations, with every judgment made locally.
 
-### 可完成的提醒与轻量任务
+### Completable reminders and lightweight tasks
 
-- 为提醒加入完成、稍后提醒和跳过操作。
-- 让宠物对完成状态给出适度反馈。
-- 提供当天提醒和专注记录的简要回顾。
+- Add complete, snooze, and skip actions to reminders.
+- Let the pet give measured feedback on completion.
+- Provide a brief review of the day's reminders and focus sessions.
 
-### 多显示器与多宠物
+### Multiple monitors and multiple pets
 
-- 为不同显示器分别记忆位置、吸附状态和可见性。
-- 支持多个独立角色实例，各自保留外观和行为配置。
-- 为多宠物提供统一的管理与快速隐藏入口。
+- Remember position, snapping state, and visibility per monitor.
+- Support multiple independent character instances, each keeping its own appearance and behavior configuration.
+- Provide a unified management and quick-hide entry point for multiple pets.
 
-## 远期：扩展角色生态
+## Long term: expanding the character ecosystem
 
-### 模型发现与分享
+### Model discovery and sharing
 
-- 提供受控的模型目录，展示预览、作者、版本和能力标签。
-- 支持一键安装、更新和分享 `.livelymodel` 包。
-- 延续模型脚本安全校验与来源提示，避免弱化本地安全边界。
+- Provide a curated model catalog showing previews, authors, versions, and capability tags.
+- Support one-click install, update, and sharing of `.livelymodel` packages.
+- Keep model script safety validation and origin hints so the local security boundary is not weakened.
 
-### 可选的本地优先对话能力
+### Optional local-first conversation
 
-- 通过右键菜单打开极简输入框，让宠物以短气泡和表情回应。
-- 支持用户自行配置兼容 OpenAI API 的服务或本地模型。
-- 默认不收集对话内容；联网、模型密钥和数据保留范围必须由用户明确配置。
+- Open a minimal input box from the right-click menu and let the pet respond with short bubbles and expressions.
+- Let users configure their own OpenAI API-compatible service or a local model.
+- Collect no conversation content by default; networking, model keys, and data retention scope must be explicitly configured by the user.
 
-## 设计原则
+## Design principles
 
-- 宠物应随时可被忽略：不抢焦点、不遮挡关键操作，并能迅速隐藏。
-- 默认本地优先：位置、行为、提醒和模型数据保存在设备上。
-- 渐进增强：自定义模型缺少某项能力时，核心交互仍应正常可用。
-- 先提高每日使用价值，再扩大模型生态和外部服务集成。
+- The pet must always be easy to ignore: it never steals focus, never blocks important actions, and can be hidden quickly.
+- Local-first by default: position, behavior, reminders, and model data stay on the device.
+- Progressive enhancement: when a custom model lacks a capability, core interactions must still work.
+- Raise everyday value first, then expand the model ecosystem and external service integrations.
