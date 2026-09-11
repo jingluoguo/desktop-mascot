@@ -4,6 +4,12 @@
 
 A lightweight interactive pet that lives in the corner of your desktop. Built with Tauri 2 + React + TypeScript and rendered by `lively-mascot`, it supports a transparent always-on-top window, mouse following, and real-time settings sync.
 
+![Five built-in characters: ghost, sprout, cat, robot, and jelly](landing/media/characters.png)
+
+The built-in characters, rendered by `lively-mascot` at runtime.
+
+![The ghost character cycling through expressions such as sleep, idle, happy, love, and eureka](landing/media/demo.gif)
+
 ## Documentation
 
 - [Roadmap](./ROADMAP.md) — where the project is heading and what comes next
@@ -56,6 +62,8 @@ yarn tauri build
 ```
 
 Tauri writes build artifacts to `src-tauri/target/release/bundle/`.
+
+Official release builds are published for macOS (Apple Silicon and Intel) and Windows only. Linux is supported by the toolchain and can be built from source with `yarn tauri build`, but no Linux package is published yet.
 
 ## Landing page
 

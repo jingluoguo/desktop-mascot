@@ -4,6 +4,12 @@
 
 一个运行在桌面角落的轻量互动宠物。它基于 Tauri 2 + React + TypeScript 构建，使用 `lively-mascot` 渲染角色，支持透明置顶窗口、鼠标跟随和实时设置同步。
 
+![五个内置角色：幽灵、豆芽、猫咪、机器人、果冻](landing/media/characters.png)
+
+内置角色，由 `lively-mascot` 实时渲染。
+
+![幽灵角色依次展示睡眠、待机、开心、心动、灵光一现等表情](landing/media/demo.gif)
+
 ## 相关文档
 
 - [路线图](./ROADMAP.zh-CN.md) — 项目方向与后续计划
@@ -56,6 +62,8 @@ yarn tauri build
 ```
 
 构建产物由 Tauri 输出到 `src-tauri/target/release/bundle/`。
+
+正式发布的安装包目前只覆盖 macOS（Apple Silicon 与 Intel）和 Windows。Linux 在工具链层面是支持的，可以用 `yarn tauri build` 自行构建，但暂未发布 Linux 安装包。
 
 ## 项目落地页
 
