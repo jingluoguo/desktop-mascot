@@ -89,7 +89,15 @@ button { font: inherit; }
 .pet-reminder-toast { position: absolute; top: 10px; left: 50%; z-index: 8; display: grid; gap: 7px; min-width: 150px; max-width: min(260px, calc(100vw - 20px)); padding: 9px 12px; color: #e9f8f4; border: 1px solid rgba(114, 203, 187, .5); border-radius: 8px; background: rgba(18, 34, 32, .92); box-shadow: 0 10px 24px rgba(0,0,0,.25); transform: translateX(-50%); pointer-events: auto; animation: reminder-toast-in 220ms ease-out both; }
 .pet-reminder-toast span { color: #72cbb7; font: 8px ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; }
 .pet-reminder-toast strong { overflow: hidden; font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.pet-reminder-toast button { justify-self: end; min-height: 24px; padding: 3px 8px; color: #102520; border: 0; border-radius: 4px; background: #72cbb7; font-size: 10px; font-weight: 700; cursor: pointer; }.pet-reminder-toast button:hover { background: #9ce0d0; }.pet-reminder-toast button:focus-visible { outline: 2px solid #e9f8f4; outline-offset: 2px; }
+/* The toast lives inside the pet window, which can be as narrow as 170px. A two-column grid keeps
+   the primary action on its own line so the label never wraps mid-button. */
+.pet-reminder-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.pet-reminder-toast button { min-height: 24px; padding: 3px 6px; color: #a8d9cd; border: 1px solid rgba(114, 203, 187, .42); border-radius: 4px; background: transparent; font-size: 10px; font-weight: 700; white-space: nowrap; cursor: pointer; transition: color .15s ease, border-color .15s ease, background .15s ease; }
+.pet-reminder-toast button:hover { color: #102520; border-color: #9ce0d0; background: #9ce0d0; }
+.pet-reminder-toast button:focus-visible { outline: 2px solid #e9f8f4; outline-offset: 2px; }
+.pet-reminder-toast .pet-reminder-primary { grid-column: 1 / -1; color: #102520; border-color: transparent; background: #72cbb7; }
+.pet-reminder-toast .pet-reminder-primary:hover { background: #9ce0d0; }
+.pet-reminder-toast .pet-reminder-dismiss { justify-self: end; }
 @keyframes reminder-toast-in { from { opacity: 0; transform: translate(-50%, -5px); } to { opacity: 1; transform: translate(-50%, 0); } }
 .pet-menu { position: absolute; left: 20px; top: 20px; z-index: 10; width: 190px; padding: 13px; border: 1px solid rgba(157, 232, 255, .23); border-radius: 12px; background: #0a191b; box-shadow: 0 16px 32px rgba(0, 0, 0, .3); cursor: default; pointer-events: auto; }
 .menu-header { display: flex; justify-content: space-between; margin-bottom: 10px; color: #d9eef2; font-size: 11px; }.menu-count { color: #6f929c; font-family: ui-monospace, monospace; }
@@ -623,6 +631,9 @@ button { font: inherit; }
 .reminder-card-copy > small { overflow: hidden; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .reminder-status-chip { padding: 3px 5px; color: var(--muted); border: 1px solid var(--line); border-radius: 3px; font: 8px ui-monospace, SFMono-Regular, monospace; letter-spacing: .08em; }
 .reminder-status-chip.active { color: var(--accent); border-color: rgba(131, 223, 201, .35); background: var(--accent-soft); }
+/* A one-off reminder that already ran its course ends up disabled, which is not the same thing as
+   a reminder the user switched off. The warm chip keeps the two readable apart. */
+.reminder-status-chip.done { color: var(--warm); border-color: rgba(240, 176, 138, .38); background: rgba(240, 176, 138, .12); }
 .reminder-switch { position: relative; display: grid; place-items: center; width: 32px; height: 20px; cursor: pointer; }
 .reminder-switch input { position: absolute; opacity: 0; }
 .reminder-switch i { position: relative; display: block; width: 30px; height: 16px; border: 1px solid #52645f; border-radius: 12px; background: rgba(7, 15, 14, .4); transition: .18s ease; }
@@ -1486,4 +1497,27 @@ button.work-card:focus-visible { outline: 2px solid var(--accent); outline-offse
   .dashboard-panel-reminders .reminder-card-main { grid-template-columns: 82px minmax(0, 1fr) 34px; padding-left: 17px; }
   .dashboard-panel-reminders .reminder-time { padding-right: 14px; }
   .dashboard-panel-reminders .reminder-actions { padding-left: 17px; }
+}
+
+/* Daily review: the reminders workspace is a single column, so the review reads as the closing
+   section under the list. Counts come from the reminder event log, so a reminder that already
+   rescheduled itself still counts towards today. */
+.reminder-review .group-heading { margin-bottom: 10px; }
+.reminder-review .group-heading h2 { font-size: 20px; letter-spacing: -.01em; }
+.review-hint { margin: 0 0 18px; color: var(--muted); font-size: 11px; line-height: 1.65; }
+.review-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.review-stat { display: grid; gap: 5px; padding: 13px 15px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255, 255, 255, .025); }
+.review-stat strong { color: var(--ink); font: 600 24px/.95 ui-monospace, SFMono-Regular, monospace; letter-spacing: -.02em; }
+.review-stat span { overflow: hidden; color: var(--muted); font: 9px ui-monospace, SFMono-Regular, monospace; letter-spacing: .08em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.review-focus { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-top: 10px; padding: 13px 15px; border-radius: 9px; background: rgba(240, 176, 138, .08); box-shadow: inset 0 0 0 1px rgba(240, 176, 138, .16); }
+.review-focus span { color: var(--muted); font-size: 10px; }
+.review-focus strong { color: var(--warm); font: 650 22px/.95 ui-monospace, SFMono-Regular, monospace; }
+.review-empty { margin: 0; padding: 4px 0 10px; color: var(--muted); font-size: 11px; }
+.theme-light .review-stat { border-color: rgba(49, 82, 71, .13); background: rgba(255, 255, 255, .62); }
+
+@media (max-width: 620px) {
+  .reminder-review .group-heading h2 { font-size: 18px; }
+  .review-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .review-stat { padding: 11px 12px; }
+  .review-stat strong { font-size: 20px; }
 }

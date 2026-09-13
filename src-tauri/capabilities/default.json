@@ -19,6 +19,7 @@
     "opener:default",
     "global-shortcut:default",
     "autostart:default",
+    "notification:default",
     "updater:default",
     "process:default"
   ]

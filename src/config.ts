@@ -1,4 +1,8 @@
 import type { DashboardLocale, InteractionTrigger, MascotSettings } from "./types";
+import appManifest from "../package.json";
+import mascotManifest from "lively-mascot/package.json";
+const appVersion = appManifest.version;
+const mascotEngineVersion = mascotManifest.version;
 const STORAGE_KEY = "nightlight-mascot-settings";
 const SETTINGS_SCHEMA_VERSION = 5;
 const UI_STORAGE_KEY = "desktop-mascot-dashboard-preferences";
@@ -138,7 +142,7 @@ const uiText = {
     noReminders: "还没有定时任务",
     reminderEnabled: "已启用",
     strongReminder: "强提醒",
-    strongReminderHint: "保持弹出，直到点击宠物后再自动归位",
+    strongReminderHint: "保持弹出并发送系统通知，直到点击宠物后归位",
     nextReminder: "下次提醒",
     deleteReminder: "删除",
     reminderSaved: "提醒已保存",
@@ -146,6 +150,19 @@ const uiText = {
     reminderOn: "启用",
     reminderOff: "停用",
     reminderPaused: "已暂停",
+    reminderDone: "已完成",
+    reminderComplete: "完成",
+    reminderSnoozeTemplate: "稍后 {minutes} 分钟",
+    reminderSkip: "跳过",
+    snoozeDuration: "稍后分钟",
+    snoozedUntil: "稍后提醒",
+    dailyReview: "今日回顾",
+    dailyReviewHint: "今天的提醒处理情况与专注记录",
+    reviewFired: "已提醒",
+    reviewCompleted: "已完成",
+    reviewSnoozed: "已稍后",
+    reviewSkipped: "已跳过",
+    reviewEmpty: "今天还没有记录",
     focusTitle: "开始新一轮",
     focusHint: "写下这一轮要做的事，设定时长后直接开始。",
     focusMode: "专注模式",
@@ -336,7 +353,7 @@ const uiText = {
     noReminders: "No scheduled tasks yet",
     reminderEnabled: "Enabled",
     strongReminder: "Persistent reminder",
-    strongReminderHint: "Stay revealed until the mascot is clicked, then dock automatically",
+    strongReminderHint: "Stay revealed and send a system notification until clicked",
     nextReminder: "Next reminder",
     deleteReminder: "Delete",
     reminderSaved: "Reminder saved",
@@ -344,6 +361,19 @@ const uiText = {
     reminderOn: "ON",
     reminderOff: "OFF",
     reminderPaused: "PAUSED",
+    reminderDone: "DONE",
+    reminderComplete: "Done",
+    reminderSnoozeTemplate: "Snooze {minutes}m",
+    reminderSkip: "Skip",
+    snoozeDuration: "Snooze minutes",
+    snoozedUntil: "Snoozed until",
+    dailyReview: "Today's review",
+    dailyReviewHint: "How today's reminders were handled, plus focus sessions",
+    reviewFired: "Fired",
+    reviewCompleted: "Done",
+    reviewSnoozed: "Snoozed",
+    reviewSkipped: "Skipped",
+    reviewEmpty: "Nothing recorded yet today",
     focusTitle: "Start a session",
     focusHint: "Name what you are doing, set the time, and start when ready.",
     focusMode: "FOCUS MODE",
@@ -451,6 +481,15 @@ const englishEmotionGroups: Record<string, string> = {
   work: "Work states",
 };
 
+type EmotionLabelSource = { id?: string; name?: string; desc?: string };
+/** The engine ships an English name and a Chinese description for every built-in emotion, so the
+ *  display language is a presentation choice rather than a data one. Custom models may register
+ *  emotions with neither, so the raw id is the last resort instead of an empty label. */
+const emotionLabel = (emotion: EmotionLabelSource | null | undefined, locale: DashboardLocale, fallbackId = "") =>
+  locale === "zh-CN"
+    ? emotion?.desc || emotion?.name || emotion?.id || fallbackId
+    : emotion?.name || emotion?.desc || emotion?.id || fallbackId;
+
 const workTypeName = (type: string, locale: DashboardLocale) => {
   const normalized = type.trim().toLowerCase();
   if (locale === "zh-CN") return ({ app: "应用", plugin: "插件", web: "网站", library: "库" } as Record<string, string>)[normalized] ?? type;
@@ -465,5 +504,5 @@ const defaultThemes: Record<string, Pick<MascotSettings, "bodyColor" | "outlineC
   ghost: { bodyColor: "#bdeef2", outlineColor: "#23434d", accentColor: "#a9d9ff" },
   jelly: { bodyColor: "#f29cc2", outlineColor: "#5a243e", accentColor: "#ffe0a8" },
 };
-export { STORAGE_KEY, SETTINGS_SCHEMA_VERSION, UI_STORAGE_KEY, AUTHOR_DATA_CACHE_KEY, AUTHOR_DATA_URL, DEFAULT_SETTINGS, MAX_MASCOT_SIZE, CONTEXT_MENU_WIDTH, interactionTriggers, characters, uiText, englishEmotionGroups, workTypeName, workTypeClass, defaultThemes };
+export { STORAGE_KEY, SETTINGS_SCHEMA_VERSION, UI_STORAGE_KEY, AUTHOR_DATA_CACHE_KEY, AUTHOR_DATA_URL, DEFAULT_SETTINGS, MAX_MASCOT_SIZE, CONTEXT_MENU_WIDTH, interactionTriggers, characters, uiText, englishEmotionGroups, emotionLabel, workTypeName, workTypeClass, defaultThemes, appVersion, mascotEngineVersion };
 export type { UiCopy };

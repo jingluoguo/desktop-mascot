@@ -9,6 +9,7 @@ use tauri::WindowEvent;
 use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_updater::UpdaterExt;
 
 struct TrayMenuState {
@@ -75,6 +76,22 @@ struct UpdateManagerState {
     session: Mutex<UpdateSession>,
 }
 
+/// Reminder actions the mascot toast can report back. A fired reminder stays pending until the
+/// user completes, snoozes, or skips it; recurring reminders keep their own schedule either way.
+const REMINDER_ACTION_COMPLETED: &str = "completed";
+const REMINDER_ACTION_SNOOZED: &str = "snoozed";
+const REMINDER_ACTION_SKIPPED: &str = "skipped";
+const REMINDER_ACTION_FIRED: &str = "fired";
+const DEFAULT_SNOOZE_MINUTES: u32 = 5;
+const MAX_SNOOZE_MINUTES: u32 = 120;
+/// The daily review only needs "today", so a short retention window keeps the log small.
+const REMINDER_EVENT_RETENTION_SECONDS: i64 = 7 * 24 * 60 * 60;
+const REMINDER_EVENT_LIMIT: usize = 500;
+
+fn default_snooze_minutes() -> u32 {
+    DEFAULT_SNOOZE_MINUTES
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Reminder {
@@ -88,14 +105,35 @@ struct Reminder {
     system_notification: bool,
     next_run_at: Option<i64>,
     last_fired_at: Option<i64>,
+    /// Set while a reminder is waiting out a snooze so the dashboard can show "snoozed until".
+    #[serde(default)]
+    snoozed_until: Option<i64>,
+    #[serde(default = "default_snooze_minutes")]
+    snooze_minutes: u32,
+    /// Set once a one-off reminder has fired, so the dashboard can tell a reminder that ran its
+    /// course apart from one the user switched off by hand. Clearing it means "armed again".
+    #[serde(default)]
+    completed_at: Option<i64>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReminderEvent {
+    id: String,
+    reminder_id: String,
+    title: String,
+    action: String,
+    at: i64,
 }
 
 #[derive(Default)]
 struct ReminderManagerState {
     reminders: Mutex<Vec<Reminder>>,
+    events: Mutex<Vec<ReminderEvent>>,
     pomodoro: Mutex<PomodoroState>,
     timer: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     data_path: Mutex<Option<PathBuf>>,
+    events_data_path: Mutex<Option<PathBuf>>,
     pomodoro_data_path: Mutex<Option<PathBuf>>,
 }
 
@@ -339,22 +377,96 @@ fn next_recurring_run(reminder: &Reminder, now: DateTime<Local>) -> Option<i64> 
 }
 
 fn normalize_reminder(mut reminder: Reminder) -> Reminder {
+    reminder.snooze_minutes = reminder.snooze_minutes.clamp(1, MAX_SNOOZE_MINUTES);
+    let now = Local::now();
+    // A snooze that already elapsed while the app was closed falls back to the normal schedule
+    // instead of lingering as a stale "snoozed until" label.
+    if reminder
+        .snoozed_until
+        .is_some_and(|until| until <= now.timestamp())
+    {
+        reminder.snoozed_until = None;
+    }
     if !reminder.enabled {
         reminder.next_run_at = None;
+        reminder.snoozed_until = None;
         return reminder;
     }
-    let now = Local::now();
     if reminder.schedule == "once" {
         reminder.next_run_at = parse_run_at(&reminder.run_at)
             .map(|date| date.timestamp())
             .filter(|timestamp| *timestamp > now.timestamp());
         if reminder.next_run_at.is_none() {
-            reminder.enabled = false;
+            // A one-off reminder that already fired stays armed only while it is waiting out a
+            // snooze, so a restart does not silently drop a pending "later".
+            match reminder.snoozed_until {
+                Some(until) => reminder.next_run_at = Some(until),
+                // A one-off reminder whose time has passed cannot be armed again, so it keeps its
+                // completion marker instead of falling back to the ambiguous "off" label when the
+                // user flips the switch and the backend quietly refuses.
+                None => {
+                    reminder.enabled = false;
+                    return reminder;
+                }
+            }
         }
     } else {
         reminder.next_run_at = next_recurring_run(&reminder, now);
     }
+    // Reaching this point means the reminder is armed again, so a completion left over from an
+    // earlier one-off run no longer describes it.
+    reminder.completed_at = None;
     reminder
+}
+
+fn reminder_events_file<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<PathBuf, String> {
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    Ok(directory.join("reminder-events.json"))
+}
+
+fn start_of_today_epoch() -> i64 {
+    let now = Local::now();
+    Local
+        .with_ymd_and_hms(now.year(), now.month(), now.day(), 0, 0, 0)
+        .single()
+        .map(|date| date.timestamp())
+        .unwrap_or_else(|| now.timestamp())
+}
+
+fn record_reminder_event(
+    state: &ReminderManagerState,
+    reminder: &Reminder,
+    action: &str,
+    at: i64,
+) {
+    let Ok(mut events) = state.events.lock() else {
+        return;
+    };
+    let id = format!(
+        "{at}-{}-{action}-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|elapsed| elapsed.subsec_nanos())
+            .unwrap_or(0),
+        reminder.id
+    );
+    events.push(ReminderEvent {
+        id,
+        reminder_id: reminder.id.clone(),
+        title: reminder.title.clone(),
+        action: action.to_string(),
+        at,
+    });
+    let cutoff = at - REMINDER_EVENT_RETENTION_SECONDS;
+    events.retain(|event| event.at >= cutoff);
+    if events.len() > REMINDER_EVENT_LIMIT {
+        let excess = events.len() - REMINDER_EVENT_LIMIT;
+        events.drain(0..excess);
+    }
 }
 
 fn reminders_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -425,6 +537,18 @@ fn save_reminders(state: &ReminderManagerState) -> Result<(), String> {
     fs::write(path, contents).map_err(|error| error.to_string())
 }
 
+fn save_reminder_events(state: &ReminderManagerState) -> Result<(), String> {
+    let path = state
+        .events_data_path
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone()
+        .ok_or_else(|| "reminder event storage is unavailable".to_string())?;
+    let events = state.events.lock().map_err(|error| error.to_string())?;
+    let contents = serde_json::to_string_pretty(&*events).map_err(|error| error.to_string())?;
+    fs::write(path, contents).map_err(|error| error.to_string())
+}
+
 fn save_pomodoro_state(state: &ReminderManagerState) -> Result<(), String> {
     let path = state
         .pomodoro_data_path
@@ -462,6 +586,18 @@ fn advance_pomodoro(pomodoro: &mut PomodoroState, completed: bool) {
     pomodoro.title.clear();
     pomodoro.session_duration_seconds = pomodoro_phase_duration(pomodoro);
     pomodoro.remaining_seconds = pomodoro.session_duration_seconds;
+}
+
+/// Best-effort OS notification for reminders that opt into a strong alert. A denied permission or
+/// a platform without a notification centre must never break the scheduler loop, so errors are
+/// dropped instead of bubbling up. Only the title is set: the reminder text is what the user needs
+/// to read, and the OS already stamps the app name on the banner.
+fn send_system_notification<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reminder: &Reminder) {
+    let _ = app
+        .notification()
+        .builder()
+        .title(reminder.title.as_str())
+        .show();
 }
 
 fn start_reminder_scheduler<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
@@ -506,10 +642,14 @@ fn start_reminder_scheduler<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                     should_continue = true;
                     if reminder.next_run_at.is_some_and(|next| next <= now) {
                         reminder.last_fired_at = Some(now);
+                        // The snooze label only describes the pending firing, so it is cleared
+                        // the moment the reminder actually fires.
+                        reminder.snoozed_until = None;
                         fired.push(reminder.clone());
                         if reminder.schedule == "once" {
                             reminder.enabled = false;
                             reminder.next_run_at = None;
+                            reminder.completed_at = Some(now);
                         } else if reminder.schedule == "interval" {
                             reminder.next_run_at = Some(
                                 now + i64::from(reminder.interval_minutes.unwrap_or(60).max(1))
@@ -535,8 +675,15 @@ fn start_reminder_scheduler<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
             if !fired.is_empty() {
                 let _ = save_reminders(&state);
                 for reminder in fired {
+                    record_reminder_event(&state, &reminder, REMINDER_ACTION_FIRED, now);
+                    // A "strong" reminder mirrors the mascot toast into the OS notification centre,
+                    // so it still lands while the pet is covered or on another space.
+                    if reminder.system_notification {
+                        send_system_notification(&task_app, &reminder);
+                    }
                     let _ = task_app.emit("reminder-fired", reminder);
                 }
+                let _ = save_reminder_events(&state);
             }
             if let Some(pomodoro) = pomodoro_completed {
                 let _ = save_pomodoro_state(&state);
@@ -593,6 +740,66 @@ fn delete_reminder<R: tauri::Runtime>(
     drop(reminders);
     save_reminders(&state)?;
     list_reminders(app)
+}
+
+#[tauri::command]
+fn resolve_reminder<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    id: String,
+    action: String,
+    snooze_minutes: Option<u32>,
+) -> Result<Vec<Reminder>, String> {
+    let state = app.state::<ReminderManagerState>();
+    let now = now_epoch();
+    let resolved = {
+        let mut reminders = state.reminders.lock().map_err(|error| error.to_string())?;
+        let Some(reminder) = reminders.iter_mut().find(|item| item.id == id) else {
+            return Err("reminder not found".to_string());
+        };
+        match action.as_str() {
+            REMINDER_ACTION_SNOOZED => {
+                // A snoozed reminder is armed again, including a one-off reminder that had just
+                // disabled itself after firing. Completing or skipping only records the outcome,
+                // because recurring reminders already queued their next run when they fired.
+                let minutes = snooze_minutes
+                    .unwrap_or(reminder.snooze_minutes)
+                    .clamp(1, MAX_SNOOZE_MINUTES);
+                let until = now + i64::from(minutes) * 60;
+                reminder.snooze_minutes = minutes;
+                reminder.snoozed_until = Some(until);
+                reminder.next_run_at = Some(until);
+                reminder.enabled = true;
+                // Snoozing a one-off reminder that just ran its course arms it again, so the
+                // completion marker has to go with it.
+                reminder.completed_at = None;
+            }
+            REMINDER_ACTION_COMPLETED | REMINDER_ACTION_SKIPPED => {}
+            other => return Err(format!("unsupported reminder action: {other}")),
+        }
+        reminder.clone()
+    };
+    record_reminder_event(&state, &resolved, &action, now);
+    save_reminders(&state)?;
+    save_reminder_events(&state)?;
+    start_reminder_scheduler(&app);
+    // The dashboard may be open while the mascot toast is answered, so it needs a nudge to
+    // refresh both the reminder list and the daily review counters.
+    let _ = app.emit("reminder-resolved", &resolved);
+    list_reminders(app)
+}
+
+#[tauri::command]
+fn list_reminder_events<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Vec<ReminderEvent>, String> {
+    let state = app.state::<ReminderManagerState>();
+    let events = state.events.lock().map_err(|error| error.to_string())?;
+    let since = start_of_today_epoch();
+    Ok(events
+        .iter()
+        .filter(|event| event.at >= since)
+        .cloned()
+        .collect())
 }
 
 #[tauri::command]
@@ -1837,6 +2044,7 @@ pub fn run() {
                 .app_name("Desktop Mascot")
                 .build(),
         )
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
@@ -1888,6 +2096,23 @@ pub fn run() {
             }
             if let Ok(mut path_slot) = reminder_state.data_path.lock() {
                 *path_slot = reminder_path;
+            }
+            let reminder_events_path = reminder_events_file(app.handle()).ok();
+            if let Some(path) = reminder_events_path.clone() {
+                if let Ok(contents) = fs::read_to_string(&path) {
+                    if let Ok(items) = serde_json::from_str::<Vec<ReminderEvent>>(&contents) {
+                        let cutoff = now_epoch() - REMINDER_EVENT_RETENTION_SECONDS;
+                        if let Ok(mut events) = reminder_state.events.lock() {
+                            *events = items
+                                .into_iter()
+                                .filter(|event| event.at >= cutoff)
+                                .collect();
+                        }
+                    }
+                }
+            }
+            if let Ok(mut path_slot) = reminder_state.events_data_path.lock() {
+                *path_slot = reminder_events_path;
             }
             if let Some(path) = pomodoro_path.clone() {
                 if let Ok(contents) = fs::read_to_string(&path) {
@@ -2041,6 +2266,8 @@ pub fn run() {
             list_reminders,
             save_reminder,
             delete_reminder,
+            resolve_reminder,
+            list_reminder_events,
             get_pomodoro,
             start_pomodoro,
             pause_pomodoro,
@@ -2054,7 +2281,136 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{advance_pomodoro, is_builtin_model_id, normalize_pomodoro, valid_model_id, validate_model_interactions, validate_model_source, PomodoroState};
+    use super::{
+        advance_pomodoro, is_builtin_model_id, normalize_pomodoro, normalize_reminder,
+        start_of_today_epoch, valid_model_id, validate_model_interactions, validate_model_source,
+        PomodoroState, Reminder,
+    };
+    use chrono::Local;
+
+    fn sample_reminder() -> Reminder {
+        Reminder {
+            id: "reminder-1".into(),
+            title: "Stand up".into(),
+            enabled: true,
+            schedule: "daily".into(),
+            run_at: Local::now().to_rfc3339(),
+            interval_minutes: None,
+            emotion: "10".into(),
+            system_notification: false,
+            next_run_at: None,
+            last_fired_at: None,
+            snoozed_until: None,
+            snooze_minutes: 5,
+            completed_at: None,
+        }
+    }
+
+    #[test]
+    fn normalizes_snooze_settings_and_clamps_the_snooze_window() {
+        let reminder = normalize_reminder(Reminder {
+            snooze_minutes: 0,
+            ..sample_reminder()
+        });
+        assert_eq!(reminder.snooze_minutes, 1);
+        assert_eq!(reminder.snoozed_until, None);
+
+        let reminder = normalize_reminder(Reminder {
+            snooze_minutes: 9999,
+            ..sample_reminder()
+        });
+        assert_eq!(reminder.snooze_minutes, 120);
+    }
+
+    #[test]
+    fn keeps_a_pending_snooze_and_drops_an_elapsed_one() {
+        let pending = Local::now().timestamp() + 600;
+        let reminder = normalize_reminder(Reminder {
+            snoozed_until: Some(pending),
+            ..sample_reminder()
+        });
+        assert_eq!(reminder.snoozed_until, Some(pending));
+
+        let reminder = normalize_reminder(Reminder {
+            snoozed_until: Some(Local::now().timestamp() - 60),
+            ..sample_reminder()
+        });
+        assert_eq!(reminder.snoozed_until, None);
+    }
+
+    #[test]
+    fn disabled_reminders_lose_their_snooze_state() {
+        let reminder = normalize_reminder(Reminder {
+            enabled: false,
+            snoozed_until: Some(Local::now().timestamp() + 600),
+            ..sample_reminder()
+        });
+        assert_eq!(reminder.snoozed_until, None);
+        assert_eq!(reminder.next_run_at, None);
+    }
+
+    #[test]
+    fn a_completed_one_off_reminder_keeps_its_marker_until_it_is_armed_again() {
+        let finished = Local::now().timestamp() - 120;
+        // Still disabled, so the dashboard keeps showing "completed" after a restart instead of
+        // falling back to the ambiguous "paused" label.
+        let reminder = normalize_reminder(Reminder {
+            enabled: false,
+            completed_at: Some(finished),
+            ..sample_reminder()
+        });
+        assert_eq!(reminder.completed_at, Some(finished));
+
+        // Switched back on, so the marker no longer describes the reminder.
+        let reminder = normalize_reminder(Reminder {
+            enabled: true,
+            completed_at: Some(finished),
+            ..sample_reminder()
+        });
+        assert_eq!(reminder.completed_at, None);
+
+        // Flipping the switch on a finished one-off reminder cannot arm it again, so the marker has
+        // to survive instead of degrading into a plain "off" the moment the user touches it.
+        let reminder = normalize_reminder(Reminder {
+            enabled: true,
+            schedule: "once".into(),
+            run_at: (Local::now() - chrono::Duration::minutes(30)).to_rfc3339(),
+            completed_at: Some(finished),
+            ..sample_reminder()
+        });
+        assert!(!reminder.enabled);
+        assert_eq!(reminder.completed_at, Some(finished));
+    }
+
+    #[test]
+    fn a_fired_one_off_reminder_stays_armed_while_snoozed() {
+        let past = Local::now() - chrono::Duration::minutes(30);
+        let until = Local::now().timestamp() + 300;
+        let snoozed = normalize_reminder(Reminder {
+            schedule: "once".into(),
+            run_at: past.to_rfc3339(),
+            snoozed_until: Some(until),
+            ..sample_reminder()
+        });
+        assert!(snoozed.enabled);
+        assert_eq!(snoozed.next_run_at, Some(until));
+
+        let settled = normalize_reminder(Reminder {
+            schedule: "once".into(),
+            run_at: past.to_rfc3339(),
+            ..sample_reminder()
+        });
+        assert!(!settled.enabled);
+        assert_eq!(settled.next_run_at, None);
+    }
+
+    #[test]
+    fn daily_review_window_starts_at_local_midnight() {
+        let start = start_of_today_epoch();
+        let now = Local::now().timestamp();
+        assert!(start <= now);
+        assert!(now - start < 24 * 60 * 60);
+    }
 
     #[test]
     fn completed_focus_advances_to_the_configured_long_break() {

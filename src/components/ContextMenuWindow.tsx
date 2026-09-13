@@ -3,7 +3,7 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
-import { CONTEXT_MENU_WIDTH, uiText } from "../config";
+import { CONTEXT_MENU_WIDTH, emotionLabel, uiText } from "../config";
 import { loadDashboardPreferences, shortcutDisplay } from "../lib/settings";
 import { getLivelyMascot } from "../lib/mascotRuntime";
 import type { DashboardLocale, DashboardTheme } from "../types";
@@ -32,9 +32,6 @@ export function ContextMenuWindow() {
     const numericDifference = Number(a.id) - Number(b.id);
     return Number.isNaN(numericDifference) ? a.id.localeCompare(b.id) : numericDifference;
   }), []);
-  const emotionLabel = (emotion: { id: string; name?: string; desc?: string }) => (
-    locale === "zh-CN" ? emotion.desc || emotion.name || emotion.id : emotion.name || emotion.desc || emotion.id
-  );
   const close = async () => {
     await getCurrentWindow().close().catch(() => undefined);
   };
@@ -122,7 +119,7 @@ export function ContextMenuWindow() {
       <div ref={quickReactionScrollRef} className="quick-reaction-scroll">
         <div className="quick-reaction-actions">
           {quickEmotions.map((emotion) => {
-            const label = emotionLabel(emotion);
+            const label = emotionLabel(emotion, locale);
             return <button key={emotion.id} type="button" role="menuitem" title={label} onClick={() => void triggerEmotion(emotion.id)}><span>{label}</span></button>;
           })}
         </div>

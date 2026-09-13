@@ -34,11 +34,11 @@ This roadmap describes current intent rather than a release commitment for every
 - Automatically hide or go quiet during full-screen presentations, meetings, or screen sharing.
 - Provide clear toggles and status explanations, with every judgment made locally.
 
-### Completable reminders and lightweight tasks
+### Completable reminders and lightweight tasks (done)
 
-- Add complete, snooze, and skip actions to reminders.
-- Let the pet give measured feedback on completion.
-- Provide a brief review of the day's reminders and focus sessions.
+- [x] Add complete, snooze, and skip actions to reminders.
+- [x] Let the pet give measured feedback on completion.
+- [x] Provide a brief review of the day's reminders and focus sessions.
 
 ### Multiple monitors and multiple pets
 

@@ -6,8 +6,8 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import type { MascotInstance } from "lively-mascot";
 import { CONTEXT_MENU_WIDTH, MAX_MASCOT_SIZE, uiText } from "../config";
-import type { DashboardPreferences, InteractionTrigger, MascotSettings, PomodoroState, Reminder } from "../types";
-import { getPomodoro, loadDashboardPreferences, loadSettings, openSettingsWindow, persistSettings, petWindowSize, setGlobalShortcuts } from "../lib/settings";
+import type { DashboardPreferences, InteractionTrigger, MascotSettings, PomodoroState, Reminder, ReminderEventAction } from "../types";
+import { getPomodoro, loadDashboardPreferences, loadSettings, openSettingsWindow, persistSettings, petWindowSize, resolveReminder, setGlobalShortcuts } from "../lib/settings";
 import { getLivelyMascot } from "../lib/mascotRuntime";
 import { checkForAppUpdate } from "../lib/appUpdates";
 
@@ -16,6 +16,15 @@ const MODEL_HIT_SELECTOR = [
   ".pet-host .lively-mascot svg",
 ].join(", ");
 const INTERACTIVE_HIT_SELECTOR = `${MODEL_HIT_SELECTOR}, .pet-reminder-toast`;
+
+// Built-in emotion ids from lively-mascot: 30 "task complete", 39 "waiting", 34 "cancelled".
+// Acknowledging a reminder is a short reaction, so the pet falls back to its own state right after.
+const REMINDER_ACTION_EMOTIONS: Record<Exclude<ReminderEventAction, "fired">, string> = {
+  completed: "30",
+  snoozed: "39",
+  skipped: "34",
+};
+const REMINDER_FEEDBACK_DURATION = 1800;
 
 const revealDockedPet = () => invoke<boolean>("reveal_main_window").catch(() => false);
 const EDGE_DOCK_RETURN_DELAY = 6000;
@@ -31,6 +40,7 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   const clickTimerRef = useRef<number | null>(null);
   const reminderActiveRef = useRef(false);
   const reminderSequenceRef = useRef(0);
+  const reminderFeedbackTimerRef = useRef<number | null>(null);
   const pomodoroRef = useRef<PomodoroState | null>(null);
   const scaleFrameRef = useRef<number | null>(null);
   const scaleTargetRef = useRef(1);
@@ -69,7 +79,9 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
   const [locale, setLocale] = useState(() => loadDashboardPreferences().locale);
   const localeRef = useRef(locale);
   const [activeEmotion, setActiveEmotion] = useState(settings.emotion);
-  const [activeReminderTitle, setActiveReminderTitle] = useState<string | null>(null);
+  // A toast either carries a reminder the user can complete, snooze, or skip, or it is a plain
+  // notice (pomodoro phase changes) that can only be acknowledged.
+  const [activeToast, setActiveToast] = useState<{ title: string; reminder: Reminder | null } | null>(null);
   settingsRef.current = settings;
   localeRef.current = locale;
 
@@ -425,7 +437,7 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
             if (reminderSequenceRef.current !== reminderSequence) return;
             void getCurrentWindow().setIgnoreCursorEvents(false).catch(() => undefined);
             ignoreCursorEventsRef.current = false;
-            setActiveReminderTitle(payload.title);
+            setActiveToast({ title: payload.title, reminder: payload });
             setActiveEmotion(payload.emotion || settingsRef.current.emotion);
           });
         }),
@@ -448,7 +460,7 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
             ignoreCursorEventsRef.current = false;
             const hasBreakStarted = payload.phase === "shortBreak" || payload.phase === "longBreak";
             const copy = uiText[localeRef.current];
-            setActiveReminderTitle(hasBreakStarted ? copy.pomodoroBreakStarted : copy.pomodoroFocusStarted);
+            setActiveToast({ title: hasBreakStarted ? copy.pomodoroBreakStarted : copy.pomodoroFocusStarted, reminder: null });
             setActiveEmotion(hasBreakStarted ? "30" : "01");
           });
         }),
@@ -740,6 +752,7 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
     if (interactionResetTimerRef.current !== null) window.clearTimeout(interactionResetTimerRef.current);
     if (clickTimerRef.current !== null) window.clearTimeout(clickTimerRef.current);
     if (edgeDockReturnTimerRef.current !== null) window.clearTimeout(edgeDockReturnTimerRef.current);
+    if (reminderFeedbackTimerRef.current !== null) window.clearTimeout(reminderFeedbackTimerRef.current);
     if (scaleFrameRef.current !== null) window.cancelAnimationFrame(scaleFrameRef.current);
     if (dragFrameRef.current !== null) window.cancelAnimationFrame(dragFrameRef.current);
     if (dragCursorPollRef.current !== null) window.clearInterval(dragCursorPollRef.current);
@@ -756,9 +769,9 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
     }
   };
 
-  const acknowledgeReminder = () => {
+  const dismissToast = () => {
     reminderSequenceRef.current += 1;
-    setActiveReminderTitle(null);
+    setActiveToast(null);
     reminderActiveRef.current = false;
     // The cursor is still resting on the pet when the toast gets dismissed, and the
     // drag/hover handlers would replay the hover reaction right away. Treat that hover
@@ -769,9 +782,30 @@ export function PetWindow({ modelRegistryVersion, onModelRegistryReload }: { mod
     retractDockedPet();
   };
 
+  // Completing, snoozing, or skipping all dismiss the toast the same way; they only differ in the
+  // short reaction the pet plays and in what the backend records for the daily review.
+  const resolveToastReminder = (action: Exclude<ReminderEventAction, "fired">) => {
+    const reminder = activeToast?.reminder;
+    if (!reminder) return;
+    dismissToast();
+    if (reminderFeedbackTimerRef.current !== null) window.clearTimeout(reminderFeedbackTimerRef.current);
+    setActiveEmotion(REMINDER_ACTION_EMOTIONS[action]);
+    reminderFeedbackTimerRef.current = window.setTimeout(() => {
+      reminderFeedbackTimerRef.current = null;
+      restorePresentation();
+    }, REMINDER_FEEDBACK_DURATION);
+    void resolveReminder(reminder.id, action, action === "snoozed" ? reminder.snoozeMinutes : undefined).catch(() => undefined);
+  };
+
   return <main className="pet-window" onContextMenu={openContextMenu}>
     <div ref={hostRef} className="pet-host" aria-label={uiText[locale].petAriaLabel} />
-    {activeReminderTitle && <div className="pet-reminder-toast" role="alert"><span>{uiText[locale].petReminderLabel}</span><strong>{activeReminderTitle}</strong><button type="button" onClick={acknowledgeReminder}>{uiText[locale].acknowledgeReminder}</button></div>}
+    {activeToast && <div className="pet-reminder-toast" role="alert">
+      <span>{uiText[locale].petReminderLabel}</span>
+      <strong>{activeToast.title}</strong>
+      {activeToast.reminder
+        ? <div className="pet-reminder-actions"><button type="button" className="pet-reminder-primary" onClick={() => resolveToastReminder("completed")}>{uiText[locale].reminderComplete}</button><button type="button" onClick={() => resolveToastReminder("snoozed")}>{uiText[locale].reminderSnoozeTemplate.replace("{minutes}", String(activeToast.reminder.snoozeMinutes))}</button><button type="button" onClick={() => resolveToastReminder("skipped")}>{uiText[locale].reminderSkip}</button></div>
+        : <button type="button" className="pet-reminder-primary pet-reminder-dismiss" onClick={dismissToast}>{uiText[locale].acknowledgeReminder}</button>}
+    </div>}
   </main>;
 }
 

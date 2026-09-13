@@ -59,6 +59,17 @@ type Reminder = {
   systemNotification: boolean;
   nextRunAt: number | null;
   lastFiredAt: number | null;
+  snoozedUntil: number | null;
+  snoozeMinutes: number;
+  completedAt: number | null;
+};
+type ReminderEventAction = "fired" | "completed" | "snoozed" | "skipped";
+type ReminderEvent = {
+  id: string;
+  reminderId: string;
+  title: string;
+  action: ReminderEventAction;
+  at: number;
 };
 type PomodoroPhase = "focus" | "shortBreak" | "longBreak";
 type PomodoroStatus = "idle" | "running" | "paused";
@@ -126,4 +137,4 @@ type AuthorData = {
   tags: AuthorTag[];
   works: AuthorWork[];
 };
-export type { MascotSettings, InteractionTrigger, InteractionSettings, InteractionCapabilities, ShortcutSettingKey, LivelyMascotApi, CustomModelSummary, CustomModelSources, ModelAction, DashboardTheme, DashboardLocale, DashboardTab, DashboardPreferences, AppUpdateStatus, AuthorLink, AuthorTag, AuthorWork, AuthorData, ReminderSchedule, Reminder, PomodoroPhase, PomodoroStatus, PomodoroState };
+export type { MascotSettings, InteractionTrigger, InteractionSettings, InteractionCapabilities, ShortcutSettingKey, LivelyMascotApi, CustomModelSummary, CustomModelSources, ModelAction, DashboardTheme, DashboardLocale, DashboardTab, DashboardPreferences, AppUpdateStatus, AuthorLink, AuthorTag, AuthorWork, AuthorData, ReminderSchedule, Reminder, ReminderEvent, ReminderEventAction, PomodoroPhase, PomodoroStatus, PomodoroState };
