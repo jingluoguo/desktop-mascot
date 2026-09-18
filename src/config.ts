@@ -259,6 +259,9 @@ const uiText = {
     modelImportUnsupported: "模型包版本不受支持。请使用 lively-mascot 0.3.1 生成模型。",
     modelImportTooLarge: "模型文件超过 2 MB 限制，请压缩资源后重试。",
     modelImportUnsafe: "模型包含不允许的网络、动态代码或应用接口调用。",
+    modelImportConfirmTitle: "导入前请确认",
+    modelImportConfirmBody: "模型脚本会以与本应用相同的权限运行，可以读写本应用的数据与窗口。请只导入你信任来源的模型。",
+    modelImportConfirmAction: "仍然导入",
   },
   en: {
     dashboardLabel: "Dashboard",
@@ -470,6 +473,9 @@ const uiText = {
     modelImportUnsupported: "This model package version is not supported. Generate the model with lively-mascot 0.3.1.",
     modelImportTooLarge: "A model file exceeds the 2 MB limit. Reduce its size and try again.",
     modelImportUnsafe: "The model contains a blocked network, dynamic-code, or app-interface call.",
+    modelImportConfirmTitle: "Confirm before importing",
+    modelImportConfirmBody: "Model scripts run with the same privileges as this app and can read or change its data and windows. Import only models from a source you trust.",
+    modelImportConfirmAction: "Import anyway",
   },
 } as const;
 

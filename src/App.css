@@ -466,6 +466,7 @@ button { font: inherit; }
 .model-import-button input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
 .model-import-status { display: block; margin-top: 8px; color: var(--muted); font-size: 10px; }
 .model-import-hint { display: block; max-width: 420px; margin-top: 8px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.model-trust-hint { display: block; max-width: 420px; margin-top: 6px; padding: 7px 10px; color: #ef9f83; border-radius: 7px; background: rgba(169, 80, 57, .13); font-size: 10px; line-height: 1.5; }
 .model-import-status.error { color: #ef9f83; }
 .model-import-status.ready { color: var(--accent); }
 .dashboard-panel .control-row,
@@ -928,6 +929,7 @@ button.work-card:focus-visible { outline: 2px solid var(--accent); outline-offse
 .theme-light .model-dropzone { border-color: #b9d0cc; background: rgba(235, 244, 241, .65); }
 .theme-light .model-import-button { border-color: #b9d0cc; }
 .theme-light .model-import-button:hover { color: #fff; border-color: var(--accent); background: var(--accent); }
+.theme-light .model-trust-hint { color: #8a3f2a; background: rgba(169, 80, 57, .08); }
 .theme-light .dashboard-panel-about { background: radial-gradient(720px 260px at 16% 0%, rgba(24, 127, 129, .06), transparent 68%), radial-gradient(560px 220px at 94% 10%, rgba(169, 80, 57, .04), transparent 70%); }
 .theme-light .author-mark { border-color: rgba(24, 127, 129, .3); background: linear-gradient(160deg, rgba(24, 127, 129, .07), rgba(169, 80, 57, .05)); box-shadow: 0 18px 38px rgba(45, 62, 57, .12); }
 .theme-light .author-mark img { box-shadow: 0 0 0 1px rgba(32, 38, 36, .1), 0 10px 22px rgba(45, 62, 57, .14); }

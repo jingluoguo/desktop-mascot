@@ -9,6 +9,7 @@ import type { AppUpdateStatus, AuthorData, AuthorTag, CustomModelSummary, Dashbo
 import { loadCachedAuthorData, openExternalUrl, parseAuthorData } from "../lib/author";
 import { checkForAppUpdate as resolveAppUpdate } from "../lib/appUpdates";
 import { downloadModelPackage, loadCustomModels, modelFilesFromSelection, modelImportErrorText } from "../lib/customModels";
+import type { ModelFilePayload } from "../lib/customModels";
 import { getLivelyMascot } from "../lib/mascotRuntime";
 import { deleteReminder, getPomodoro, listReminderEvents, listReminders, loadDashboardPreferences, loadSettings, pausePomodoro, persistSettings, resetPomodoro, savePomodoro, saveReminder, setGlobalShortcuts, shortcutDisplay, shortcutFromKeyboardEvent, skipPomodoro, startPomodoro } from "../lib/settings";
 import { CharacterPreview } from "./CharacterPreview";
@@ -57,6 +58,10 @@ export function SettingsWindow() {
   const [modelDragActive, setModelDragActive] = useState(false);
   const [modelActionFeedback, setModelActionFeedback] = useState<string | null>(null);
   const [pendingModelAction, setPendingModelAction] = useState<{ id: string; action: ModelAction } | null>(null);
+  // A parsed package waiting for the user to accept that its script will run with the app's own
+  // privileges. This confirmation is the actual security boundary: the backend's source scan can
+  // only refuse obvious shapes, it cannot confine code that runs in this window.
+  const [pendingModelImport, setPendingModelImport] = useState<ModelFilePayload | null>(null);
   const [runtimeCapabilities, setRuntimeCapabilities] = useState<ModelCapabilities | null>(null);
   const [autostartState, setAutostartState] = useState<"loading" | "enabled" | "disabled" | "error">("loading");
   const [autostartBusy, setAutostartBusy] = useState(false);
@@ -286,13 +291,15 @@ export function SettingsWindow() {
   }, [dashboardPreferences.locale, text.dashboardLabel]);
 
   useEffect(() => {
-    if (!pendingModelAction) return;
+    if (!pendingModelAction && !pendingModelImport) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPendingModelAction(null);
+      if (event.key !== "Escape") return;
+      setPendingModelAction(null);
+      setPendingModelImport(null);
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [pendingModelAction]);
+  }, [pendingModelAction, pendingModelImport]);
 
   useEffect(() => {
     if (!editingReminder) return;
@@ -432,9 +439,22 @@ export function SettingsWindow() {
     persistSettings(next);
     void emitTo("main", "mascot-settings-update", next);
   };
-  const installModelFiles = async (files: File[]) => {
+  // Reading and validating the package is kept separate from installing it, so the user gets to see
+  // what is about to be handed to the app before any of it runs.
+  const prepareModelFiles = async (files: File[]) => {
+    if (files.length === 0) return;
     try {
-      const payload = await modelFilesFromSelection(files);
+      setPendingModelImport(await modelFilesFromSelection(files));
+    } catch (error) {
+      setModelImportState("error");
+      setModelImportMessage(modelImportErrorText(error, text));
+    }
+  };
+  const confirmModelImport = async () => {
+    const payload = pendingModelImport;
+    setPendingModelImport(null);
+    if (!payload) return;
+    try {
       await invoke("install_custom_model", { upload: payload });
       await refreshCustomModels();
       setModelImportState("ready");
@@ -449,12 +469,12 @@ export function SettingsWindow() {
   const importModel = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
-    await installModelFiles(files);
+    await prepareModelFiles(files);
   };
   const handleModelDrop = async (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setModelDragActive(false);
-    await installModelFiles(Array.from(event.dataTransfer.files));
+    await prepareModelFiles(Array.from(event.dataTransfer.files));
   };
   const removeModel = async (id: string) => {
     try {
@@ -604,6 +624,7 @@ export function SettingsWindow() {
                 <div className="character-grid">{characters.map((character) => <button key={character.id} type="button" className={settings.character === character.id ? "selected" : ""} onClick={() => selectCharacter(character.id)}><CharacterPreview character={character.id} settings={settings} /><small>{character.name[dashboardPreferences.locale]}</small><em>{text.officialModel}</em></button>)}{customModels.map((model) => { const labels = livelyMascot?.models?.[model.id]?.presentation?.labels; const name = dashboardPreferences.locale === "zh-CN" ? labels?.zh || model.name : labels?.en || model.name; return <div key={model.id} className={`custom-model-card${settings.character === model.id ? " selected" : ""}`}><button type="button" className="custom-model-select" onClick={() => selectCharacter(model.id)}><span className="custom-model-preview"><CharacterPreview character={model.id} settings={settings} /></span><small>{name}</small><em>{text.userModel}{model.version ? ` · ${model.version}` : ""}{model.author ? ` · ${model.author}` : ""}</em></button><div className="custom-model-actions"><button type="button" onClick={(event) => { event.stopPropagation(); requestModelAction(model.id, "export"); }} aria-label={`${text.exportModel} ${name}`} title={text.exportModel}>↓</button><button type="button" onClick={(event) => { event.stopPropagation(); requestModelAction(model.id, "delete"); }} aria-label={`${text.deleteModel} ${name}`} title={text.deleteModel}>×</button></div>{modelActionFeedback === model.id && <small className="model-action-feedback" role="status">{text.modelExported}</small>}</div>; })}</div>
                 <div className={`model-dropzone${modelDragActive ? " active" : ""}`} onDragEnter={(event) => { event.preventDefault(); setModelDragActive(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setModelDragActive(false); }} onDrop={(event) => void handleModelDrop(event)}><strong>{text.dropModel}</strong><span>{text.modelFormatHint}<a className="model-skill-link" href={LIVELY_MASCOT_SKILL_URL} target="_blank" rel="noreferrer" onClick={(event) => { event.preventDefault(); openExternalUrl(LIVELY_MASCOT_SKILL_URL); }}>lively-mascot Skill</a>{dashboardPreferences.locale === "zh-CN" ? "。" : "."}</span><label className="model-import-button"><input type="file" accept=".livelymodel,.js,.css,.json" multiple onChange={importModel} />{text.chooseModel}</label></div>
                 <small className="model-import-hint">{text.modelPackageContents}</small>
+                <small className="model-trust-hint" role="note">{text.modelTrustHint}</small>
                 {modelImportState !== "idle" && <small className={`model-import-status ${modelImportState}`}>{modelImportMessage || (modelImportState === "ready" ? text.modelImported : text.modelImportError)}</small>}
               </section>
               <section className="settings-group">
@@ -776,6 +797,7 @@ export function SettingsWindow() {
           </div>}
         </div>
       </div>
+      {pendingModelImport && <div className="model-confirm-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingModelImport(null); }}><section className="model-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="model-import-confirm-title"><span className="control-label">{text.importModel}</span><h2 id="model-import-confirm-title">{text.modelImportConfirmTitle}</h2><p>{text.modelImportConfirmBody}</p><strong>{pendingModelImport.id}</strong><div className="model-confirm-actions"><button type="button" className="model-confirm-cancel" onClick={() => setPendingModelImport(null)}>{text.cancel}</button><button type="button" className="model-confirm-primary" onClick={() => void confirmModelImport()}>{text.modelImportConfirmAction}</button></div></section></div>}
       {pendingModelAction && (() => {
         const model = customModels.find((item) => item.id === pendingModelAction.id);
         const labels = model ? livelyMascot?.models?.[model.id]?.presentation?.labels : undefined;

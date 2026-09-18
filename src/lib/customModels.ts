@@ -66,20 +66,42 @@ const interactionCapabilitiesFromManifest = (source: string): InteractionCapabil
 
 const MODEL_PACKAGE_EXTENSION = ".livelymodel";
 const MODEL_FILE_NAMES = ["model.js", "model.css", "model.json"] as const;
+const MAX_MODEL_FILE_SIZE = 2 * 1024 * 1024;
+const MAX_MODEL_PACKAGE_SIZE = 8 * 1024 * 1024;
+const MAX_MODEL_PACKAGE_ENTRIES = 32;
+const MAX_MODEL_PACKAGE_UNCOMPRESSED_SIZE = MODEL_FILE_NAMES.length * MAX_MODEL_FILE_SIZE;
 type ModelFilePayload = { id: string; model_js: string; model_css: string; model_json: string };
 
 const modelFilesFromSelection = async (files: File[]): Promise<ModelFilePayload> => {
   const entries = new Map<string, string>();
   for (const file of files) {
     if (file.name.toLowerCase().endsWith(MODEL_PACKAGE_EXTENSION)) {
-      const archive = unzipSync(new Uint8Array(await file.arrayBuffer()));
-      Object.entries(archive).forEach(([name, content]) => {
+      if (file.size > MAX_MODEL_PACKAGE_SIZE) throw new Error("Model package is too large");
+      const archiveData = new Uint8Array(await file.arrayBuffer());
+      let entryCount = 0;
+      let uncompressedSize = 0;
+      const limitedArchive = unzipSync(archiveData, {
+        filter: (entry) => {
+          entryCount += 1;
+          uncompressedSize += entry.originalSize;
+          if (entryCount > MAX_MODEL_PACKAGE_ENTRIES || uncompressedSize > MAX_MODEL_PACKAGE_UNCOMPRESSED_SIZE) {
+            throw new Error("Model package is too large");
+          }
+          if (entry.originalSize > MAX_MODEL_FILE_SIZE) throw new Error("Model file is too large (2 MB maximum)");
+          const baseName = entry.name.split("/").pop()?.toLowerCase() ?? "";
+          return MODEL_FILE_NAMES.includes(baseName as typeof MODEL_FILE_NAMES[number]);
+        },
+      });
+      Object.entries(limitedArchive).forEach(([name, content]) => {
         const baseName = name.split("/").pop()?.toLowerCase() ?? "";
         if (MODEL_FILE_NAMES.includes(baseName as typeof MODEL_FILE_NAMES[number])) entries.set(baseName, strFromU8(content));
       });
     } else {
       const baseName = file.name.split("/").pop()?.toLowerCase() ?? "";
-      if (MODEL_FILE_NAMES.includes(baseName as typeof MODEL_FILE_NAMES[number])) entries.set(baseName, await file.text());
+      if (MODEL_FILE_NAMES.includes(baseName as typeof MODEL_FILE_NAMES[number])) {
+        if (file.size > MAX_MODEL_FILE_SIZE) throw new Error("Model file is too large (2 MB maximum)");
+        entries.set(baseName, await file.text());
+      }
     }
   }
   const missing = MODEL_FILE_NAMES.filter((name) => !entries.has(name));

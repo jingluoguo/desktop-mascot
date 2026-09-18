@@ -26,12 +26,15 @@
 - The cursor-following loop polls less often and caches window coordinates.
 - The emotion grid no longer prints the numeric emotion id.
 - README, ROADMAP, and CHANGELOG are bilingual, with English as the default.
+- A second launch now brings the running mascot forward instead of starting a rival instance that would drive its own scheduler and write its own copy of the saved data.
+- The webview runs under a Content Security Policy, and importing a user model asks for confirmation before its script is allowed to run.
 
 ### Fixed
 
 - Fixed interaction reactions overriding a reminder expression.
 - Fixed the docking position after a window resize, and kept the context menu inside the visible area.
 - Fixed a one-off reminder losing its snooze across restarts.
+- Fixed reminder, focus-timer, and window-position files being written in place, which could leave a truncated document that the next launch read as empty.
 
 ## [0.2.0] - 2026-09-07
 
